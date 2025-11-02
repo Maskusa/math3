@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import Tile from './Tile';
 import { BoardType, Position } from '../types';
@@ -40,7 +41,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile,
   const containerSize = BOARD_SIZE * TILE_SIZE + (BOARD_SIZE - 1) * TILE_GAP;
 
   return (
-    <div className="bg-slate-800 p-2 sm:p-4 rounded-lg shadow-lg border-2 border-slate-700">
+    <div className="bg-black/30 p-2 sm:p-4 rounded-md shadow-lg border-2 border-cyan-400/50 shadow-cyan-400/20" style={{boxShadow: '0 0 25px rgba(56, 189, 248, 0.3)'}}>
       <div
         className="relative"
         style={{
@@ -69,14 +70,15 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile,
             <div 
                 key={p.id} 
                 className={`absolute rounded-full animate-particle border-2 ${p.color}`}
+                /* FIX: Cast style object to allow custom CSS properties for animation */
                 style={{
                     left: p.x,
                     top: p.y,
                     width: '8px',
                     height: '8px',
-                    '--tw-translate-x': `${(Math.random() - 0.5) * 50}px`,
-                    '--tw-translate-y': `${(Math.random() - 0.5) * 50}px`,
-                }}
+                    '--tw-translate-x': `${(Math.random() - 0.5) * 60}px`,
+                    '--tw-translate-y': `${(Math.random() - 0.5) * 60}px`,
+                } as React.CSSProperties}
             />
         ))}
       </div>
