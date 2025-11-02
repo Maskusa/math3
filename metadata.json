@@ -1,0 +1,5 @@
+{
+  "name": "Gem Swap: A Match-3 Adventure",
+  "description": "A classic Match-3 puzzle game built with React and Tailwind CSS. Swap adjacent gems to create lines of three or more of the same color to score points and trigger dazzling cascades.",
+  "requestFramePermissions": []
+}
