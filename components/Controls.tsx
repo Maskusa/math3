@@ -54,13 +54,13 @@ const Controls: React.FC<ControlsProps> = (props) => {
     <div className="bg-black/30 p-3 rounded-lg shadow-lg border border-cyan-400/30 flex flex-col items-center justify-center gap-4 w-full">
         <div className="grid grid-cols-2 gap-3 w-full">
             <ControlButton onClick={onToggleHints} isActive={showHints} disabled={isProcessing && !isPaused}>
-               {showHints ? 'Hints: ON' : 'Hints: OFF'}
+               {showHints ? 'Подсказки: ВКЛ' : 'Подсказки: ВЫКЛ'}
             </ControlButton>
              <ControlButton onClick={onToggleAi} isActive={isAiActive} disabled={isProcessing && !isPaused}>
-               {isAiActive ? 'Bot: Active' : 'Bot: Idle'}
+               {isAiActive ? 'Бот: ВКЛ' : 'Бот: ВЫКЛ'}
             </ControlButton>
             <ControlButton onClick={onToggleMute} isActive={!isMuted} disabled={false}>
-               {isMuted ? 'Sound: OFF' : 'Sound: ON'}
+               {isMuted ? 'Звук: ВЫКЛ' : 'Звук: ВКЛ'}
             </ControlButton>
             <ControlButton onClick={onRestart} isActive={false} disabled={false}>
                Сброс
@@ -84,11 +84,11 @@ const Controls: React.FC<ControlsProps> = (props) => {
         <div className="flex items-center justify-center gap-3 w-full">
             {isPaused ? (
               <ControlButton onClick={onPlay} isActive={true} disabled={false} className="flex-1">
-                Play ▶️
+                Старт ▶️
               </ControlButton>
             ) : (
               <ControlButton onClick={onPause} isActive={false} disabled={!isProcessing} className="flex-1">
-                Pause ⏸️
+                Пауза ⏸️
               </ControlButton>
             )}
              <ControlButton onClick={onStep} isActive={false} disabled={!isPaused} className="flex-1">

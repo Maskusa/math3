@@ -42,6 +42,16 @@ const TimingControls: React.FC<TimingControlsProps> = ({ config, onConfigChange,
   return (
     <div className="bg-black/30 p-3 rounded-lg shadow-lg border border-cyan-400/30 flex flex-wrap items-center justify-center gap-4">
         <SliderControl
+            label="Задержка свайпа"
+            value={config.swapDelay}
+            min={0}
+            max={1000}
+            step={50}
+            unit="ms"
+            onChange={(e) => onConfigChange({ swapDelay: Number(e.target.value) })}
+            isDisabled={isDisabled}
+        />
+        <SliderControl
             label="Задержка совпадений"
             value={config.matchDelay}
             min={100}

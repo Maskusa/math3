@@ -17,9 +17,9 @@ const GameInfo: React.FC<GameInfoProps> = ({ score, moves, level }) => {
   return (
     <div className="flex flex-col gap-4 w-full text-white">
         <h1 className="text-5xl font-bold text-center mb-2 text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 font-orbitron">HEXA-CORE</h1>
-        <InfoCard title="Score" value={score} />
-        <InfoCard title="Moves Left" value={moves} />
-        <InfoCard title="Level" value={level} />
+        <InfoCard title="Счет" value={score} />
+        <InfoCard title="Ходы" value={moves} />
+        <InfoCard title="Уровень" value={level} />
     </div>
   );
 };

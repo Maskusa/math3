@@ -13,18 +13,19 @@ interface TileProps {
   size: number;
   gap: number;
   isProcessing: boolean;
+  health?: number;
+  maxHealth?: number;
 }
 
-const Tile: React.FC<TileProps> = ({ type, row, col, onClick, isSelected, isMatched, isHint, isNew, size, gap, isProcessing }) => {
+const Tile: React.FC<TileProps> = ({ type, row, col, onClick, isSelected, isMatched, isHint, isNew, size, gap, isProcessing, health, maxHealth }) => {
   const color = TILE_COLORS[type] || 'bg-gray-700';
   const shape = TILE_SHAPES[type] || '';
   const shadow = TILE_SHADOWS[type] || '';
   
   const targetTop = row * (size + gap);
   const targetLeft = col * (size + gap);
-  
-  const initialTop = isNew ? targetTop - 50 : targetTop;
-  const initialOpacity = isNew ? 0 : 1;
+
+  const hasHealth = typeof health === 'number' && typeof maxHealth === 'number' && maxHealth > 0;
 
   const tileStyle: React.CSSProperties = {
     position: 'absolute',
@@ -38,6 +39,10 @@ const Tile: React.FC<TileProps> = ({ type, row, col, onClick, isSelected, isMatc
     zIndex: isSelected ? 10 : 1,
     pointerEvents: isProcessing ? 'none' : 'auto',
   };
+
+  if (hasHealth) {
+    tileStyle.opacity = (health / maxHealth) * 0.5 + 0.5;
+  }
   
   // Apply initial off-screen position for animation
   if (isNew) {
@@ -57,11 +62,24 @@ const Tile: React.FC<TileProps> = ({ type, row, col, onClick, isSelected, isMatc
     <div
       style={tileStyle}
       onClick={onClick}
-      className={`flex items-center justify-center rounded-md cursor-pointer transform ${color} ${shadow} ${
+      className={`relative flex items-center justify-center rounded-md cursor-pointer transform ${color} ${shadow} ${
         isSelected ? 'ring-4 ring-yellow-300 shadow-lg' : 'ring-2 ring-inset ring-black/30'
       } ${hintAnimation}`}
     >
         <span className="text-4xl text-white drop-shadow-lg" style={{textShadow: '0 0 5px rgba(0,0,0,0.7)'}}>{shape}</span>
+        {typeof health === 'number' && health > 0 && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center text-white font-bold text-2xl" style={{textShadow: '0 0 5px black, 0 0 5px black'}}>
+            {health}
+          </div>
+        )}
+        {hasHealth && (
+            <div className="absolute bottom-1 left-1 right-1 h-2 bg-black/50 rounded-full overflow-hidden border border-slate-500/50">
+                <div 
+                    className="h-full bg-gradient-to-r from-lime-500 to-green-400 transition-all duration-300 ease-in-out"
+                    style={{ width: `${(health / maxHealth) * 100}%` }}
+                ></div>
+            </div>
+        )}
     </div>
   );
 };

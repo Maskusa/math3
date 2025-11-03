@@ -2,19 +2,21 @@
 import React, { useEffect, useState } from 'react';
 import Tile from './Tile';
 import { BoardType, Position } from '../types';
-import { BOARD_SIZE, TILE_COLORS } from '../constants';
+import { TILE_COLORS } from '../constants';
+import { BoardSize } from '../App';
 
 interface GameBoardProps {
   board: BoardType;
   onTileClick: (row: number, col: number) => void;
   selectedTile: Position | null;
   isProcessing: boolean;
+  boardSize: BoardSize;
 }
 
 const TILE_SIZE = 56; // Corresponds to md:w-14
 const TILE_GAP = 4; // Corresponds to gap-1
 
-const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile, isProcessing }) => {
+const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile, isProcessing, boardSize }) => {
   const [particles, setParticles] = useState<{id: number, x: number, y: number, color: string}[]>([]);
 
   useEffect(() => {
@@ -38,15 +40,16 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile,
   }, [board]);
 
 
-  const containerSize = BOARD_SIZE * TILE_SIZE + (BOARD_SIZE - 1) * TILE_GAP;
+  const containerWidth = boardSize.width * TILE_SIZE + (boardSize.width - 1) * TILE_GAP;
+  const containerHeight = boardSize.height * TILE_SIZE + (boardSize.height - 1) * TILE_GAP;
 
   return (
     <div className="bg-black/30 p-2 sm:p-4 rounded-md shadow-lg border-2 border-cyan-400/50 shadow-cyan-400/20" style={{boxShadow: '0 0 25px rgba(56, 189, 248, 0.3)'}}>
       <div
-        className="relative"
+        className="relative transition-all duration-300"
         style={{
-          width: containerSize,
-          height: containerSize,
+          width: containerWidth,
+          height: containerHeight,
         }}
       >
         {board.map((tile) => (
@@ -64,6 +67,8 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile,
               size={TILE_SIZE}
               gap={TILE_GAP}
               isProcessing={isProcessing}
+              health={tile.health}
+              maxHealth={tile.maxHealth}
             />
           ))}
         {particles.map(p => (

@@ -1,5 +1,5 @@
 {
-  "name": "Hexa-Core: A Cyberpunk Match-3",
-  "description": "A classic Match-3 puzzle game reimagined with a gritty, neon-drenched cyberpunk aesthetic. Swap adjacent data blocks to create lines of three or more to score points and trigger dazzling digital cascades.",
+  "name": "Creative Suite: Text & Game Editor",
+  "description": "A multi-tool application featuring a text flow controller and a sandbox game level generator.",
   "requestFramePermissions": []
 }

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 
-type SoundName = 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric';
+type SoundName = 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy';
 
 export const useSounds = () => {
   const [isMuted, setIsMuted] = useState(false);
@@ -166,6 +166,59 @@ export const useSounds = () => {
         lfo.stop(now + 0.2);
         osc.start(now);
         osc.stop(now + 0.2);
+        break;
+      }
+      case 'rainbow': {
+        const notes = [440, 554.37, 659.25, 880, 1108.73];
+        notes.forEach((note, i) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(note, now + i * 0.06);
+            gain.gain.setValueAtTime(0.4, now + i * 0.06);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.3);
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start(now + i * 0.06);
+            osc.stop(now + i * 0.06 + 0.3);
+        });
+        break;
+      }
+      case 'complex_hit': {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(150, now);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(now);
+        osc.stop(now + 0.15);
+        break;
+      }
+       case 'complex_destroy': {
+        const noise = audioCtx.createBufferSource();
+        const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.4, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        noise.buffer = buffer;
+        
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(800, now);
+        filter.Q.setValueAtTime(0.5, now);
+        filter.frequency.exponentialRampToValueAtTime(200, now + 0.3);
+
+        const gain = audioCtx.createGain();
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.linearRampToValueAtTime(0, now + 0.4);
+
+        noise.connect(filter).connect(gain).connect(masterGain);
+        noise.start(now);
+        noise.stop(now + 0.4);
         break;
       }
     }

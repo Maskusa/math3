@@ -1,4 +1,4 @@
-import { TimingConfig } from '../App';
+import { TimingConfig, GenerationConfig, BoardSize } from './App';
 
 export interface Position {
   row: number;
@@ -15,6 +15,8 @@ export interface TileData {
     isMatched?: boolean;
     isHint?: boolean;
     isNew?: boolean;
+    health?: number;
+    maxHealth?: number;
 }
 
 export type BoardType = TileData[];
@@ -22,12 +24,13 @@ export type BoardType = TileData[];
 export type GamePhase = 'IDLE' | 'MATCHING' | 'REMOVING' | 'GRAVITY' | 'REFILLING' | 'GAME_OVER';
 
 export interface GameLogicProps {
-    playSound: (sound: 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric') => void;
+    playSound: (sound: 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy') => void;
     timingConfig: TimingConfig;
     isPaused: boolean;
     stepTrigger: number;
     onPhaseChange: (phase: GamePhase) => void;
     isStepMode: boolean;
     autoPause: () => void;
-    enabledSpecialTiles: Record<number, boolean>;
+    generationConfig: GenerationConfig;
+    boardSize: BoardSize;
 }

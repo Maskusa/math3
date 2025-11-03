@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hexa-Core: A Cyberpunk Match-3</title>
+    <title>Sandbox Game Level Editor</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,6 +12,7 @@
       body {
         font-family: 'Roboto Mono', monospace;
         background-color: #0c111d;
+        color: #e5e7eb;
         background-image: 
           linear-gradient(rgba(12, 123, 220, 0.1) 1px, transparent 1px),
           linear-gradient(90deg, rgba(12, 123, 220, 0.1) 1px, transparent 1px);
@@ -20,18 +21,9 @@
       .font-orbitron {
         font-family: 'Orbitron', sans-serif;
       }
-       @keyframes particle-fade-out {
-        0% {
-          transform: scale(1) translate(0, 0);
-          opacity: 1;
-        }
-        100% {
-          transform: scale(0) var(--tw-translate-x) var(--tw-translate-y);
-          opacity: 0;
-        }
-      }
-      .animate-particle {
-        animation: particle-fade-out 0.7s ease-out forwards;
+      /* Custom styles for range inputs */
+      input[type="range"].accent-cyan-500 {
+        accent-color: #06b6d4;
       }
     </style>
   <script type="importmap">
@@ -45,6 +37,7 @@
 </script>
 </head>
   <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

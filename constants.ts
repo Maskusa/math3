@@ -7,19 +7,29 @@ export const TILE_TYPE_LASER_V = 7;
 export const TILE_TYPE_LASER_H = 8;
 export const TILE_TYPE_LASER_CROSS = 9;
 export const TILE_TYPE_ELECTRIC = 10;
+export const TILE_TYPE_RAINBOW = 11;
+export const TILE_TYPE_COMPLEX = 12;
+export const TILE_TYPE_METAL = 13;
+export const TILE_TYPE_STONE = 14; // New unique tile
 
-export const SPECIAL_TILE_TYPES = [
+export const NORMAL_SPECIAL_TILE_TYPES = [
   TILE_TYPE_BOMB,
   TILE_TYPE_LASER_V,
   TILE_TYPE_LASER_H,
   TILE_TYPE_LASER_CROSS,
   TILE_TYPE_ELECTRIC,
+  TILE_TYPE_RAINBOW,
 ];
 
-export const TILE_TYPES = NORMAL_TILE_TYPES + SPECIAL_TILE_TYPES.length;
+export const UNIQUE_TILE_TYPES = [
+  TILE_TYPE_COMPLEX,
+  TILE_TYPE_METAL,
+  TILE_TYPE_STONE,
+];
+
+export const TILE_TYPES = NORMAL_TILE_TYPES + NORMAL_SPECIAL_TILE_TYPES.length + UNIQUE_TILE_TYPES.length;
 export const SPECIAL_TILE_SPAWN_CHANCE = 0.05; // 5% chance
 
-export const BOARD_SIZE = 8;
 export const INITIAL_MOVES = 30;
 
 // Cyberpunk color palette
@@ -36,6 +46,10 @@ export const TILE_COLORS: { [key: number]: string } = {
   [TILE_TYPE_LASER_H]: 'bg-sky-500',
   [TILE_TYPE_LASER_CROSS]: 'bg-sky-300',
   [TILE_TYPE_ELECTRIC]: 'bg-amber-400',
+  [TILE_TYPE_RAINBOW]: 'bg-slate-100',
+  [TILE_TYPE_COMPLEX]: 'bg-slate-600',
+  [TILE_TYPE_METAL]: 'bg-slate-400',
+  [TILE_TYPE_STONE]: 'bg-slate-500',
 };
 
 export const TILE_SHADOWS: { [key: number]: string } = {
@@ -51,6 +65,10 @@ export const TILE_SHADOWS: { [key: number]: string } = {
   [TILE_TYPE_LASER_H]: 'shadow-[0_0_20px_rgba(14,165,233,0.9)]',
   [TILE_TYPE_LASER_CROSS]: 'shadow-[0_0_20px_rgba(125,211,252,0.9)]',
   [TILE_TYPE_ELECTRIC]: 'shadow-[0_0_20px_rgba(251,191,36,0.9)]',
+  [TILE_TYPE_RAINBOW]: 'shadow-[0_0_20px_rgba(255,255,255,0.9)]',
+  [TILE_TYPE_COMPLEX]: 'shadow-[0_0_20px_rgba(100,116,139,0.9)]',
+  [TILE_TYPE_METAL]: 'shadow-[0_0_20px_rgba(156,163,175,0.9)]',
+  [TILE_TYPE_STONE]: 'shadow-[0_0_20px_rgba(100,116,139,0.9)]',
 };
 
 // Cyberpunk/tech-themed shapes
@@ -67,12 +85,20 @@ export const TILE_SHAPES: { [key: number]: string } = {
   [TILE_TYPE_LASER_H]: '⇔',
   [TILE_TYPE_LASER_CROSS]: '╋',
   [TILE_TYPE_ELECTRIC]: '⚡',
+  [TILE_TYPE_RAINBOW]: '★',
+  [TILE_TYPE_COMPLEX]: '🛡️',
+  [TILE_TYPE_METAL]: '⚙️',
+  [TILE_TYPE_STONE]: '🪨',
 };
 
-export const SPECIAL_TILE_NAMES: { [key: number]: string } = {
+export const TILE_NAMES: { [key: number]: string } = {
     [TILE_TYPE_BOMB]: 'Бомба',
     [TILE_TYPE_LASER_V]: 'Лазер (В)',
     [TILE_TYPE_LASER_H]: 'Лазер (Г)',
     [TILE_TYPE_LASER_CROSS]: 'Лазер (Крест)',
     [TILE_TYPE_ELECTRIC]: 'Электричество',
+    [TILE_TYPE_RAINBOW]: 'Радуга',
+    [TILE_TYPE_COMPLEX]: 'Сложный',
+    [TILE_TYPE_METAL]: 'Металл',
+    [TILE_TYPE_STONE]: 'Камень',
 };

@@ -1,453 +1,326 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BoardType, Position, TileData, GamePhase, GameLogicProps } from '../types';
-import { BOARD_SIZE, INITIAL_MOVES, NORMAL_TILE_TYPES, SPECIAL_TILE_SPAWN_CHANCE, SPECIAL_TILE_TYPES, TILE_TYPE_BOMB, TILE_TYPE_ELECTRIC, TILE_TYPE_LASER_CROSS, TILE_TYPE_LASER_H, TILE_TYPE_LASER_V } from '../constants';
+import { BoardType, GameLogicProps, Position, TileData } from '../types';
+import { INITIAL_MOVES, TILE_TYPE_BOMB, TILE_TYPE_LASER_H, TILE_TYPE_LASER_V } from '../constants';
 
-let tileIdCounter = 0;
-
-const hasInitialMatches = (board: BoardType): boolean => {
-  const getTile = (r: number, c: number) => board.find(t => t.row === r && t.col === c);
-  for (let r = 0; r < BOARD_SIZE; r++) {
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      const tile = getTile(r, c);
-      if (!tile || tile.type >= NORMAL_TILE_TYPES) continue;
-      if (c < BOARD_SIZE - 2) {
-        if (tile.type === getTile(r, c + 1)?.type && tile.type === getTile(r, c + 2)?.type) return true;
-      }
-      if (r < BOARD_SIZE - 2) {
-        if (tile.type === getTile(r + 1, c)?.type && tile.type === getTile(r + 2, c)?.type) return true;
-      }
-    }
-  }
-  return false;
+const areAdjacent = (pos1: Position, pos2: Position) => {
+    return Math.abs(pos1.row - pos2.row) + Math.abs(pos1.col - pos2.col) === 1;
 };
 
-const findMatches = (board: BoardType): TileData[] => {
-    const matchedTiles = new Set<TileData>();
-    const getTile = (r: number, c: number) => board.find(t => t.row === r && t.col === c);
+export const useGameLogic = ({
+    playSound,
+    timingConfig,
+    isPaused,
+    stepTrigger,
+    onPhaseChange,
+    autoPause,
+    generationConfig,
+    boardSize,
+}: GameLogicProps) => {
+    const [board, setBoard] = useState<BoardType>([]);
+    const [score, setScore] = useState(0);
+    const [moves, setMoves] = useState(INITIAL_MOVES);
+    const [level, setLevel] = useState(1);
+    const [selectedTile, setSelectedTile] = useState<Position | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [isAiActive, setIsAiActive] = useState(false);
+    const [showHints, setShowHints] = useState(false);
 
-    for (let r = 0; r < BOARD_SIZE; r++) {
-        for (let c = 0; c < BOARD_SIZE; c++) {
-            const tile = getTile(r, c);
-            if (!tile || tile.type >= NORMAL_TILE_TYPES) continue;
+    const isProcessingRef = useRef(isProcessing);
+    useEffect(() => {
+        isProcessingRef.current = isProcessing;
+    }, [isProcessing]);
+    
+    // FIX: Use ReturnType<typeof setTimeout> for browser compatibility instead of NodeJS.Timeout.
+    const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+    const clearTimeouts = useCallback(() => {
+        timeoutsRef.current.forEach(clearTimeout);
+        timeoutsRef.current = [];
+    }, []);
 
-            if (c < BOARD_SIZE - 2 && tile.type === getTile(r, c + 1)?.type && tile.type === getTile(r, c + 2)?.type) {
-                let i = c;
-                while(i < BOARD_SIZE && getTile(r, i)?.type === tile.type) {
-                    matchedTiles.add(getTile(r, i)!);
-                    i++;
-                }
-            }
-            if (r < BOARD_SIZE - 2 && tile.type === getTile(r + 1, c)?.type && tile.type === getTile(r + 2, c)?.type) {
-                 let i = r;
-                while(i < BOARD_SIZE && getTile(i, c)?.type === tile.type) {
-                    matchedTiles.add(getTile(i, c)!);
-                    i++;
-                }
-            }
-        }
-    }
-    return Array.from(matchedTiles);
-};
-
-const getAffectedTiles = (specialTile: TileData, board: BoardType): TileData[] => {
-  const affected = new Set<TileData>();
-  affected.add(specialTile);
-  const getTile = (r: number, c: number) => board.find(t => t.row === r && t.col === c);
-
-  switch (specialTile.type) {
-    case TILE_TYPE_BOMB:
-      for (let r = specialTile.row - 1; r <= specialTile.row + 1; r++) {
-        for (let c = specialTile.col - 1; c <= specialTile.col + 1; c++) {
-          if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
-            const tile = getTile(r, c);
-            if (tile) affected.add(tile);
-          }
-        }
-      }
-      break;
-    case TILE_TYPE_LASER_V:
-      board.forEach(t => { if (t.col === specialTile.col) affected.add(t); });
-      break;
-    case TILE_TYPE_LASER_H:
-      board.forEach(t => { if (t.row === specialTile.row) affected.add(t); });
-      break;
-    case TILE_TYPE_LASER_CROSS:
-      board.forEach(t => { if (t.row === specialTile.row || t.col === specialTile.col) affected.add(t); });
-      break;
-    case TILE_TYPE_ELECTRIC:
-      for (let i = -BOARD_SIZE; i < BOARD_SIZE; i++) {
-        const t1 = getTile(specialTile.row + i, specialTile.col + i);
-        const t2 = getTile(specialTile.row + i, specialTile.col - i);
-        if (t1) affected.add(t1);
-        if (t2) affected.add(t2);
-      }
-      break;
-  }
-  return Array.from(affected);
-};
-
-export const useGameLogic = (props: GameLogicProps) => {
-  const { playSound, timingConfig, isPaused, stepTrigger, onPhaseChange, isStepMode, autoPause, enabledSpecialTiles } = props;
-  const { matchDelay, fallDelay, gameSpeed } = timingConfig;
-
-  const createTile = useCallback((row: number, col: number, trySpecial = true): TileData => {
-    let type: number;
-    const availableSpecials = SPECIAL_TILE_TYPES.filter(type => enabledSpecialTiles[type]);
-
-    if (trySpecial && availableSpecials.length > 0 && Math.random() < SPECIAL_TILE_SPAWN_CHANCE) {
-      type = availableSpecials[Math.floor(Math.random() * availableSpecials.length)];
-    } else {
-      type = Math.floor(Math.random() * NORMAL_TILE_TYPES);
-    }
-    return {
-      id: tileIdCounter++,
-      type: type,
-      row,
-      col,
-      isNew: true, // Mark as new for animation
+    const delay = (ms: number) => {
+        return new Promise<void>(resolve => {
+            if (isPaused && stepTrigger === 0) return;
+            const timeout = setTimeout(() => resolve(), ms / timingConfig.gameSpeed);
+            timeoutsRef.current.push(timeout);
+        });
     };
-  }, [enabledSpecialTiles]);
 
-  const createBoard = useCallback((): BoardType => {
-    let board: TileData[] = [];
-    do {
-      board = [];
-      tileIdCounter = 0;
-      for (let row = 0; row < BOARD_SIZE; row++) {
-        for (let col = 0; col < BOARD_SIZE; col++) {
-          // Mark initial tiles as not new
-          const tile = createTile(row, col, false);
-          tile.isNew = false;
-          board.push(tile);
+    const getRandomTileType = useCallback(() => {
+        const availableTypes = Object.entries(generationConfig.enabledNormal)
+            .filter(([, enabled]) => enabled)
+            .map(([type]) => Number(type));
+        return availableTypes[Math.floor(Math.random() * availableTypes.length)];
+    }, [generationConfig.enabledNormal]);
+
+    const findMatches = useCallback((currentBoard: BoardType): TileData[] => {
+        const matches = new Set<TileData>();
+        const get = (r: number, c: number) => currentBoard.find(t => t.row === r && t.col === c);
+
+        // Horizontal
+        for (let r = 0; r < boardSize.height; r++) {
+            for (let c = 0; c < boardSize.width - 2; c++) {
+                const t1 = get(r, c);
+                const t2 = get(r, c + 1);
+                const t3 = get(r, c + 2);
+                if (t1 && t2 && t3 && t1.type === t2.type && t2.type === t3.type && t1.type < TILE_TYPE_BOMB) {
+                    [t1, t2, t3].forEach(t => matches.add(t));
+                }
+            }
         }
-      }
-    } while (hasInitialMatches(board));
-    return board;
-  }, [createTile]);
-  
-  const [board, setBoard] = useState<BoardType>(() => createBoard());
-  const [selectedTile, setSelectedTile] = useState<Position | null>(null);
-  const [score, setScore] = useState(0);
-  const [moves, setMoves] = useState(INITIAL_MOVES);
-  const [level, setLevel] = useState(1);
-  const [gamePhase, _setGamePhase] = useState<GamePhase>('IDLE');
-  const [showHints, setShowHints] = useState(false);
-  const [isAiActive, setIsAiActive] = useState(false);
-  
-  const processQueue = useRef<(() => void)[]>([]);
-  const matchesToProcess = useRef<TileData[]>([]);
-  const boardRef = useRef(board);
-  boardRef.current = board;
-  const gamePhaseRef = useRef(gamePhase);
-
-
-  const setPhase = useCallback((phase: GamePhase) => {
-    gamePhaseRef.current = phase;
-    _setGamePhase(phase);
-    onPhaseChange(phase);
-  }, [onPhaseChange]);
-
-  const findPossibleMoves = useCallback((currentBoard: BoardType): Position[] => {
-    const getTile = (r: number, c: number) => currentBoard.find(t => t.row === r && t.col === c);
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
-        const tile1 = getTile(r, c);
-        if (!tile1) continue;
-
-        const checkSwap = (r2: number, c2: number): boolean => {
-          const tile2 = getTile(r2, c2);
-          if (!tile2) return false;
-          if (tile1.type >= NORMAL_TILE_TYPES || tile2.type >= NORMAL_TILE_TYPES) return true;
-          const tempBoard = currentBoard.map(t => 
-              t.id === tile1.id ? {...t, row: r2, col: c2} :
-              t.id === tile2.id ? {...t, row: r, col: c} : t);
-          return findMatches(tempBoard).length > 0;
-        };
-        
-        if (c < BOARD_SIZE - 1) if (checkSwap(r, c + 1)) return [{row: r, col: c}, {row: r, col: c + 1}];
-        if (r < BOARD_SIZE - 1) if (checkSwap(r + 1, c)) return [{row: r, col: c}, {row: r + 1, col: c}];
-      }
-    }
-    return [];
-  }, []);
-
-  const handleTileClick = useCallback((row: number, col: number) => {
-    if (gamePhaseRef.current !== 'IDLE') return;
-
-    const clickedTile = boardRef.current.find(t => t.row === row && t.col === col);
-    if (!clickedTile) return;
-
-    if (!selectedTile) {
-      setSelectedTile({ row, col });
-    } else {
-      const prevTile = boardRef.current.find(t => t.row === selectedTile.row && t.col === selectedTile.col);
-      if (!prevTile) {
-          setSelectedTile(null);
-          return;
-      }
-      
-      setSelectedTile(null);
-
-      if (prevTile.id === clickedTile.id) return;
-      
-      const isAdjacent = Math.abs(prevTile.row - row) + Math.abs(prevTile.col - col) === 1;
-      if (!isAdjacent) {
-        playSound('invalid');
-        setSelectedTile({ row, col });
-        return;
-      }
-
-      const newBoard = boardRef.current.map(t => {
-        if (t.id === prevTile.id) return { ...t, row: clickedTile.row, col: clickedTile.col };
-        if (t.id === clickedTile.id) return { ...t, row: prevTile.row, col: prevTile.col };
-        return t;
-      });
-      setBoard(newBoard);
-      playSound('swap');
-      
-      const isSpecialSwap = prevTile.type >= NORMAL_TILE_TYPES || clickedTile.type >= NORMAL_TILE_TYPES;
-      const matches = findMatches(newBoard);
-
-      if (matches.length > 0 || isSpecialSwap) {
-          setMoves(m => m - 1);
-          let initialMatches: TileData[];
-          if(isSpecialSwap){
-            const special = prevTile.type >= NORMAL_TILE_TYPES ? prevTile : clickedTile;
-            const other = prevTile.id === special.id ? clickedTile : prevTile;
-            initialMatches = getAffectedTiles(special, newBoard);
-            if(!initialMatches.find(t => t.id === other.id)) initialMatches.push(other);
-          } else {
-            initialMatches = matches;
-          }
-          matchesToProcess.current = initialMatches;
-          setPhase('MATCHING');
-          autoPause(); // Auto-pause if in step mode
-      } else {
-          playSound('invalid');
-          setTimeout(() => setBoard(boardRef.current), 300 / gameSpeed);
-      }
-    }
-  }, [selectedTile, playSound, gameSpeed, autoPause, setPhase]);
-
-  useEffect(() => {
-    if (gamePhaseRef.current !== 'IDLE' && (stepTrigger > 0 || !isPaused)) {
-       const nextAction = processQueue.current.shift();
-       if(nextAction) nextAction();
-    }
-  }, [stepTrigger, isPaused]);
-
-  useEffect(() => {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      const scheduleAction = (action: () => void, delay: number) => {
-          if (!isPaused) {
-              timeoutId = setTimeout(action, delay / gameSpeed);
-          } else {
-             processQueue.current.push(action);
-          }
-      };
-
-      const schedulePhase = (phase: GamePhase, delay: number) => {
-        scheduleAction(() => setPhase(phase), delay);
-      }
-
-      switch (gamePhase) {
-          case 'MATCHING': {
-              const currentMatches = matchesToProcess.current;
-              if (currentMatches.length === 0) {
-                  setPhase('IDLE');
-                  break;
-              }
-              
-              const processedSpecials = new Set<number>();
-              const allAffectedTiles = new Set<TileData>(currentMatches);
-              
-              let tilesToCheck = [...currentMatches];
-              while(tilesToCheck.length > 0) {
-                  const tile = tilesToCheck.pop();
-                  if(!tile || processedSpecials.has(tile.id)) continue;
-
-                  if(tile.type >= NORMAL_TILE_TYPES) {
-                      processedSpecials.add(tile.id);
-                      const affectedBySpecial = getAffectedTiles(tile, boardRef.current);
-                      affectedBySpecial.forEach(affected => {
-                          if(!allAffectedTiles.has(affected)) {
-                              allAffectedTiles.add(affected);
-                              tilesToCheck.push(affected);
-                          }
-                      });
-                  }
-              }
-
-              if (processedSpecials.size > 0) {
-                  const specials = Array.from(processedSpecials).map(id => boardRef.current.find(t=>t.id === id)!.type);
-                  if (specials.includes(TILE_TYPE_BOMB)) playSound('bomb');
-                  else if (specials.some(t => [TILE_TYPE_LASER_V, TILE_TYPE_LASER_H, TILE_TYPE_LASER_CROSS].includes(t))) playSound('laser');
-                  else if (specials.includes(TILE_TYPE_ELECTRIC)) playSound('electric');
-              } 
-              if(currentMatches.length > 0) { playSound('match'); }
-
-              const finalAffected = Array.from(allAffectedTiles);
-              setBoard(prev => prev.map(t => finalAffected.find(m => m.id === t.id) ? { ...t, isMatched: true } : t));
-              setScore(s => s + finalAffected.length * 10);
-              
-              schedulePhase('REMOVING', matchDelay);
-              break;
-          }
-          case 'REMOVING': {
-              setBoard(prev => prev.filter(t => !t.isMatched));
-              schedulePhase('GRAVITY', 50); // Short delay for visual separation
-              break;
-          }
-          case 'GRAVITY': {
-              let boardChanged = false;
-              
-              setBoard(currentBoard => {
-                const newBoard = [...currentBoard];
-                for(let c = 0; c < BOARD_SIZE; c++) {
-                    const column = newBoard.filter(t => t.col === c).sort((a,b) => b.row - a.row);
-                    let emptyRow = BOARD_SIZE - 1;
-                    for(const tile of column) {
-                        if(tile.row !== emptyRow) {
-                            tile.row = emptyRow;
-                            boardChanged = true;
-                        }
-                        emptyRow--;
-                    }
+        // Vertical
+        for (let c = 0; c < boardSize.width; c++) {
+            for (let r = 0; r < boardSize.height - 2; r++) {
+                const t1 = get(r, c);
+                const t2 = get(r + 1, c);
+                const t3 = get(r + 2, c);
+                if (t1 && t2 && t3 && t1.type === t2.type && t2.type === t3.type && t1.type < TILE_TYPE_BOMB) {
+                    [t1, t2, t3].forEach(t => matches.add(t));
                 }
-                return newBoard;
-              });
-              
-              if(boardChanged) { 
-                playSound('fall');
-              }
-              
-              scheduleAction(() => {
-                const cascadeMatches = findMatches(boardRef.current);
-                if (cascadeMatches.length > 0) {
-                    matchesToProcess.current = cascadeMatches;
-                    setPhase('MATCHING'); // Loop back to matching
-                } else {
-                    setPhase('REFILLING'); // Proceed to refill
-                }
-              }, fallDelay);
-              break;
-          }
-          case 'REFILLING': {
-                const newTiles: TileData[] = [];
-                const currentBoard = boardRef.current;
-                for (let c = 0; c < BOARD_SIZE; c++) {
-                    const tilesInCol = currentBoard.filter(t => t.col === c).length;
-                    const missingCount = BOARD_SIZE - tilesInCol;
-                    for (let i = 0; i < missingCount; i++) {
-                        newTiles.push(createTile(-(i + 1), c));
-                    }
-                }
+            }
+        }
+        return Array.from(matches);
+    }, [boardSize]);
+
+    const createBoard = useCallback(() => {
+        let newBoard: TileData[] = [];
+        let idCounter = 0;
+        for (let r = 0; r < boardSize.height; r++) {
+            for (let c = 0; c < boardSize.width; c++) {
+                newBoard.push({ id: idCounter++, type: -1, row: r, col: c });
+            }
+        }
+
+        for (let r = 0; r < boardSize.height; r++) {
+            for (let c = 0; c < boardSize.width; c++) {
+                const tile = newBoard.find(t => t.row === r && t.col === c)!;
+                let possibleTypes = Object.entries(generationConfig.enabledNormal).filter(e => e[1]).map(e => Number(e[0]));
                 
-                if (newTiles.length > 0) {
-                    playSound('fall');
-                    setBoard(prev => [...prev.map(t => ({...t, isNew: false})), ...newTiles]);
-                    
-                    const normalizeAndContinue = () => {
-                        setBoard(boardWithNewTiles => {
-                            const normalizedBoard = [...boardWithNewTiles];
-                            for(let c = 0; c < BOARD_SIZE; c++) {
-                                const column = normalizedBoard.filter(t => t.col === c).sort((a,b) => a.row - b.row);
-                                let targetRow = 0;
-                                for(const tile of column) {
-                                    tile.row = targetRow;
-                                    targetRow++;
+                const get = (row:number, col:number) => newBoard.find(t => t.row === row && t.col === col);
+
+                if (c >= 2 && get(r, c - 1)?.type === get(r, c - 2)?.type) {
+                    possibleTypes = possibleTypes.filter(t => t !== get(r, c - 1)?.type);
+                }
+                if (r >= 2 && get(r - 1, c)?.type === get(r - 2, c)?.type) {
+                     possibleTypes = possibleTypes.filter(t => t !== get(r - 1, c)?.type);
+                }
+                tile.type = possibleTypes[Math.floor(Math.random() * possibleTypes.length)];
+            }
+        }
+        setBoard(newBoard);
+        return newBoard;
+    }, [boardSize, generationConfig.enabledNormal]);
+
+    const gameLoop = useCallback(async (currentBoard: BoardType, specialTilesToActivate: TileData[] = []) => {
+        if (isProcessingRef.current) return;
+        setIsProcessing(true);
+
+        let boardState = currentBoard.map(t => ({...t}));
+        let chain = 0;
+
+        let activeSpecials = [...specialTilesToActivate];
+
+        while(true) {
+            if(isPaused) {setIsProcessing(false); return;}
+            onPhaseChange('MATCHING'); autoPause();
+            const matches = findMatches(boardState);
+            
+            let tilesToDestroy = new Set<TileData>([...matches, ...activeSpecials]);
+            activeSpecials = []; // Consume specials
+
+            if (tilesToDestroy.size === 0) break;
+            
+            chain++;
+            
+            const processingQueue = [...tilesToDestroy].filter(t => t.type >= TILE_TYPE_BOMB);
+            const processedSpecials = new Set<number>();
+
+            while(processingQueue.length > 0) {
+                const specialTile = processingQueue.shift()!;
+                if (processedSpecials.has(specialTile.id)) continue;
+                processedSpecials.add(specialTile.id);
+                
+                switch(specialTile.type) {
+                    case TILE_TYPE_BOMB:
+                        playSound('bomb');
+                        for (let r = specialTile.row - 1; r <= specialTile.row + 1; r++) {
+                            for (let c = specialTile.col - 1; c <= specialTile.col + 1; c++) {
+                                if (r >= 0 && r < boardSize.height && c >= 0 && c < boardSize.width) {
+                                    const neighbor = boardState.find(t => t.row === r && t.col === c);
+                                    if (neighbor && !tilesToDestroy.has(neighbor)) {
+                                        tilesToDestroy.add(neighbor);
+                                        if (neighbor.type >= TILE_TYPE_BOMB) processingQueue.push(neighbor);
+                                    }
                                 }
                             }
-                            
-                            matchesToProcess.current = findMatches(normalizedBoard);
-                    
-                            if(matchesToProcess.current.length > 0) {
-                                setPhase('MATCHING');
-                            } else {
-                                setPhase('IDLE');
-                            }
-                            
-                            return normalizedBoard;
+                        }
+                        break;
+                    case TILE_TYPE_LASER_V:
+                        playSound('laser');
+                         boardState.filter(t => t.col === specialTile.col).forEach(t => {
+                             if (!tilesToDestroy.has(t)) {
+                                 tilesToDestroy.add(t);
+                                 if (t.type >= TILE_TYPE_BOMB) processingQueue.push(t);
+                             }
+                         });
+                        break;
+                    case TILE_TYPE_LASER_H:
+                        playSound('laser');
+                        boardState.filter(t => t.row === specialTile.row).forEach(t => {
+                            if (!tilesToDestroy.has(t)) {
+                                 tilesToDestroy.add(t);
+                                 if (t.type >= TILE_TYPE_BOMB) processingQueue.push(t);
+                             }
                         });
-                    };
-                    
-                    scheduleAction(normalizeAndContinue, 300);
-                } else {
-                    setPhase('IDLE');
+                        break;
                 }
-                break;
             }
-      }
-      return () => { if(timeoutId) clearTimeout(timeoutId) };
-  }, [gamePhase, isPaused, stepTrigger, playSound, matchDelay, fallDelay, gameSpeed, setPhase, createTile]);
+            
+            playSound('match');
+            setScore(s => s + tilesToDestroy.size * 10 * chain);
+            onPhaseChange('REMOVING'); autoPause();
+            
+            setBoard(boardState.map(t => tilesToDestroy.has(t) ? {...t, isMatched: true} : t));
+            await delay(timingConfig.matchDelay);
+            if (isPaused) { setIsProcessing(false); return; }
 
-  useEffect(() => {
-    if (gamePhase === 'IDLE') {
-        const currentBoard = boardRef.current;
-        const possible = findPossibleMoves(currentBoard);
-        if (showHints) {
-            setBoard(b => b.map(t => ({...t, isHint: !!possible.find(p => p.row === t.row && p.col === t.col)})))
-        } else {
-            setBoard(b => b.map(t => ({...t, isHint: false})))
+            boardState = boardState.filter(t => !tilesToDestroy.has(t));
+
+            onPhaseChange('GRAVITY'); autoPause();
+            let moved = false;
+            for (let c = 0; c < boardSize.width; c++) {
+                const column = boardState.filter(t => t.col === c).sort((a,b) => b.row - a.row);
+                for (let i = 0; i < column.length; i++) {
+                    const tile = column[i];
+                    const targetRow = boardSize.height - 1 - i;
+                    if (tile.row !== targetRow) {
+                        tile.row = targetRow;
+                        moved = true;
+                    }
+                }
+            }
+
+            if (moved) playSound('fall');
+            setBoard([...boardState]);
+            await delay(timingConfig.fallDelay);
+            if (isPaused) { setIsProcessing(false); return; }
+
+            onPhaseChange('REFILLING'); autoPause();
+            let maxId = Math.max(0, ...boardState.map(t => t.id), ...[...tilesToDestroy].map(t => t.id));
+            const newTiles: TileData[] = [];
+            for (let c = 0; c < boardSize.width; c++) {
+                const count = boardState.filter(t => t.col === c).length;
+                for (let r = 0; r < boardSize.height - count; r++) {
+                    newTiles.push({ id: ++maxId, type: getRandomTileType(), col: c, row: -1 - r, isNew: true });
+                }
+            }
+            
+            boardState = [...boardState, ...newTiles];
+            setBoard([...boardState]);
+            await delay(50);
+            if (isPaused) { setIsProcessing(false); return; }
+
+            boardState.forEach(t => {
+                if (t.isNew) {
+                    const colCount = boardState.filter(t2 => t2.col === t.col && !t2.isNew).length;
+                    t.row = boardSize.height - colCount - 1;
+                    delete t.isNew;
+                }
+            });
+
+            playSound('fall');
+            setBoard([...boardState]);
+            await delay(timingConfig.fallDelay);
+            if (isPaused) { setIsProcessing(false); return; }
         }
-        
+
         if (moves <= 0) {
+            onPhaseChange('GAME_OVER');
             playSound('gameover');
-            setPhase('GAME_OVER');
-            return;
+        } else {
+            onPhaseChange('IDLE');
         }
+        setIsProcessing(false);
+    }, [isPaused, boardSize, findMatches, playSound, setScore, onPhaseChange, autoPause, delay, timingConfig, getRandomTileType, moves]);
+    
+    const handleTileClick = useCallback(async (row: number, col: number) => {
+        if (isProcessingRef.current || isPaused || moves <= 0) return;
 
-        if (isAiActive && possible.length > 0 && !isPaused) {
-            const [tile1Pos, tile2Pos] = possible;
-            setTimeout(() => {
-              if (isAiActive && gamePhaseRef.current === 'IDLE' && !isPaused) {
-                  handleTileClick(tile1Pos.row, tile1Pos.col);
-                  setTimeout(() => {
-                      if (isAiActive && gamePhaseRef.current === 'IDLE' && !isPaused) {
-                          handleTileClick(tile2Pos.row, tile2Pos.col);
-                      }
-                  }, 150 / gameSpeed);
-              }
-            }, 1000 / gameSpeed);
+        const getTile = (r: number, c: number) => board.find(t => t.row === r && t.col === c);
+
+        if (selectedTile) {
+            const current = getTile(row, col);
+            const selected = getTile(selectedTile.row, selectedTile.col);
+            
+            if (current && selected && areAdjacent({row, col}, selectedTile)) {
+                const newBoard = board.map(t => ({...t}));
+                const currentIndex = newBoard.findIndex(t => t.id === current.id);
+                const selectedIndex = newBoard.findIndex(t => t.id === selected.id);
+
+                [newBoard[currentIndex].row, newBoard[selectedIndex].row] = [selected.row, current.row];
+                [newBoard[currentIndex].col, newBoard[selectedIndex].col] = [selected.col, current.col];
+
+                const matches = findMatches(newBoard);
+                const wasSpecialMoved = current.type >= TILE_TYPE_BOMB || selected.type >= TILE_TYPE_BOMB;
+
+                if (matches.length > 0) {
+                    playSound('swap');
+                    setSelectedTile(null);
+                    setBoard(newBoard);
+                    await delay(timingConfig.swapDelay);
+
+                    setMoves(m => m - 1);
+                    
+                    let specialToActivate: TileData[] = [];
+                    if (wasSpecialMoved) {
+                        if (current.type >= TILE_TYPE_BOMB) specialToActivate.push(newBoard.find(t => t.id === current.id)!);
+                        if (selected.type >= TILE_TYPE_BOMB) specialToActivate.push(newBoard.find(t => t.id === selected.id)!);
+                    }
+                    gameLoop(newBoard, specialToActivate);
+                } else {
+                    playSound('invalid');
+                    setSelectedTile(null);
+                }
+            } else {
+                setSelectedTile({row, col});
+            }
+        } else {
+            setSelectedTile({row, col});
         }
-    }
-  }, [gamePhase, moves, showHints, isAiActive, findPossibleMoves, playSound, gameSpeed, handleTileClick, isPaused, setPhase]);
+    }, [board, selectedTile, moves, isPaused, playSound, timingConfig.swapDelay, findMatches, gameLoop, delay]);
 
-  const restartGame = useCallback(() => {
-    setPhase('REMOVING');
-    setBoard(prev => prev.map(t => ({ ...t, isMatched: true })));
-    playSound('bomb');
-
-    setTimeout(() => {
-      setScore(0);
-      setMoves(INITIAL_MOVES);
-      setLevel(1);
-      setSelectedTile(null);
-      processQueue.current = [];
-      matchesToProcess.current = [];
-      
-      const finalNewBoard = createBoard();
-      const offscreenBoard = finalNewBoard.map(tile => ({
-        ...tile,
-        isNew: true,
-        row: tile.row - BOARD_SIZE,
-      }));
-      
-      setBoard(offscreenBoard);
-
-      setTimeout(() => {
-        setBoard(finalNewBoard);
-        for (let i = 0; i < BOARD_SIZE; i++) {
-            setTimeout(() => playSound('fall'), i * 50);
+    const restartGame = useCallback((customBoard?: BoardType) => {
+        clearTimeouts();
+        setIsProcessing(false);
+        setScore(0);
+        setMoves(INITIAL_MOVES);
+        setLevel(1);
+        setSelectedTile(null);
+        if (customBoard) {
+            setBoard(customBoard);
+        } else {
+            createBoard();
         }
-        setTimeout(() => setPhase('IDLE'), 500 / gameSpeed);
-      }, 50 / gameSpeed);
+        onPhaseChange('IDLE');
+    }, [createBoard, clearTimeouts, onPhaseChange]);
 
-    }, (matchDelay + 100) / gameSpeed);
-  }, [setPhase, playSound, matchDelay, gameSpeed, createBoard]);
+    useEffect(() => {
+        // This effect will run on initial mount if not in a custom game runner context
+        // In the sandbox, we call restartGame manually with a custom board.
+    }, [boardSize]);
+    
+    useEffect(() => {
+        if (!isPaused) {
+            clearTimeouts();
+            if (isProcessingRef.current) {
+                gameLoop(board);
+            }
+        } else {
+            clearTimeouts();
+        }
+    }, [isPaused, stepTrigger]);
 
-  const toggleAi = () => setIsAiActive(p => !p);
-  const toggleHints = () => setShowHints(p => !p);
+    const toggleAi = () => setIsAiActive(p => !p);
+    const toggleHints = () => setShowHints(p => !p);
 
-  return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isAiActive, toggleAi, showHints, toggleHints, isProcessing: gamePhase !== 'IDLE' && gamePhase !== 'GAME_OVER' };
+    return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isAiActive, toggleAi, showHints, toggleHints, isProcessing };
 };
