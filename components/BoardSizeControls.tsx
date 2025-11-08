@@ -1,5 +1,5 @@
 import React from 'react';
-import { BoardSize } from '../App';
+import { BoardSize } from '../types';
 
 interface BoardSizeControlsProps {
     config: BoardSize;

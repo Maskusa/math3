@@ -1,6 +1,6 @@
 import React from 'react';
 import { TILE_NAMES, NORMAL_SPECIAL_TILE_TYPES, TILE_SHAPES, TILE_TYPE_COMPLEX, NORMAL_TILE_TYPES, TILE_COLORS, TILE_TYPE_METAL, TILE_TYPE_STONE } from '../constants';
-import { GenerationConfig } from '../App';
+import { GenerationConfig } from '../types';
 
 interface GenerationControlsProps {
     config: GenerationConfig;

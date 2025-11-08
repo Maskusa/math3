@@ -1,9 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
 import Tile from './Tile';
-import { BoardType, Position } from '../types';
+import { BoardType, Position, BoardSize } from '../types';
 import { TILE_COLORS } from '../constants';
-import { BoardSize } from '../App';
 
 interface GameBoardProps {
   board: BoardType;

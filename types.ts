@@ -1,4 +1,24 @@
-import { TimingConfig, GenerationConfig, BoardSize } from './App';
+export interface BoardSize {
+  width: number;
+  height: number;
+}
+
+export interface TimingConfig {
+  swapDelay: number;
+  matchDelay: number;
+  fallDelay: number;
+  gameSpeed: number;
+}
+
+export interface GenerationConfig {
+  enabledNormal: { [key: number]: boolean };
+  normal: { [key: number]: boolean };
+  unique: {
+      complex: { enabled: boolean; health: number };
+      metal: { enabled: boolean };
+      stone: { enabled: boolean };
+  };
+}
 
 export interface Position {
   row: number;

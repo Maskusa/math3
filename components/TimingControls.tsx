@@ -1,5 +1,5 @@
 import React from 'react';
-import { TimingConfig } from '../App';
+import { TimingConfig } from '../types';
 
 interface TimingControlsProps {
     config: TimingConfig;

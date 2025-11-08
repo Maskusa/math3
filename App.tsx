@@ -5,33 +5,11 @@ import GameInfo from './components/GameInfo';
 import GameOverModal from './components/GameOverModal';
 import Controls from './components/Controls';
 import { useSounds } from './hooks/useSounds';
-import { GamePhase, BoardType, TileData } from './types';
+import { GamePhase, TileData, BoardSize, TimingConfig, GenerationConfig } from './types';
 import TimingControls from './components/TimingControls';
 import GenerationControls from './components/GenerationControls';
 import BoardSizeControls from './components/BoardSizeControls';
 import { TILE_COLORS, TILE_SHAPES, TILE_NAMES, NORMAL_TILE_TYPES, NORMAL_SPECIAL_TILE_TYPES, UNIQUE_TILE_TYPES, TILE_SHADOWS } from './constants';
-
-export interface BoardSize {
-  width: number;
-  height: number;
-}
-
-export interface TimingConfig {
-  swapDelay: number;
-  matchDelay: number;
-  fallDelay: number;
-  gameSpeed: number;
-}
-
-export interface GenerationConfig {
-  enabledNormal: { [key: number]: boolean };
-  normal: { [key: number]: boolean };
-  unique: {
-      complex: { enabled: boolean; health: number };
-      metal: { enabled: boolean };
-      stone: { enabled: boolean };
-  };
-}
 
 type EditorBoard = (number | null)[][];
 type HistoryEntry = {
@@ -47,6 +25,50 @@ const allLibraryTiles = [
 ];
 
 type Tool = 'reset' | 'move' | 'brush' | 'eraser';
+
+// ================= STORAGE UTILS =================
+const STORAGE_PREFIX = 'level_';
+
+const getSavedLevels = (): string[] => {
+    return Object.keys(localStorage)
+        .filter(key => key.startsWith(STORAGE_PREFIX))
+        .map(key => key.replace(STORAGE_PREFIX, ''))
+        .sort();
+};
+
+const getNextLevelName = (): string => {
+    const savedLevels = getSavedLevels();
+    if (savedLevels.length === 0) {
+        return 'level_1';
+    }
+    const levelNumbers = savedLevels
+        .map(name => {
+            const match = name.match(/_(\d+)$/);
+            return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter(num => !isNaN(num));
+    
+    const maxNum = Math.max(0, ...levelNumbers);
+    return `level_${maxNum + 1}`;
+};
+
+const saveLevel = (name: string, data: { width: number, height: number, board: EditorBoard }) => {
+    if (!name) return;
+    localStorage.setItem(`${STORAGE_PREFIX}${name}`, JSON.stringify(data));
+};
+
+const loadLevel = (name: string): { width: number, height: number, board: EditorBoard } | null => {
+    const data = localStorage.getItem(`${STORAGE_PREFIX}${name}`);
+    if (data) {
+        try {
+            return JSON.parse(data);
+        } catch (error) {
+            console.error(`Failed to parse level: ${name}`, error);
+            return null;
+        }
+    }
+    return null;
+};
 
 const ToolButton: React.FC<{
   label: string;
@@ -187,9 +209,17 @@ const GameRunner: React.FC<{
     );
 };
 
+// ================= MODAL COMPONENT =================
+const Modal: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-80 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity duration-300">
+      <div className={`bg-slate-900/80 border-2 border-cyan-500/50 rounded-lg p-6 text-center shadow-2xl ${className}`}>
+        {children}
+      </div>
+    </div>
+);
 
-// =============== SANDBOX GENERATOR ===============
-const SandboxGenerator = () => {
+// ================= EDITOR COMPONENT =================
+const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => void }> = ({ levelNameToLoad, onBackToMenu }) => {
     const [width, setWidth] = useState(8);
     const [height, setHeight] = useState(8);
     const [editorBoard, setEditorBoard] = useState<EditorBoard>([]);
@@ -197,12 +227,17 @@ const SandboxGenerator = () => {
     const [history, setHistory] = useState<HistoryEntry[]>([]);
     
     const [activeTool, setActiveTool] = useState<Tool>('reset');
-    const [selectedBrushTile, setSelectedBrushTile] = useState<number | null>(null);
+    const [selectedBrushTile, setSelectedBrushTile] = useState<number | null>(0);
     const [isPainting, setIsPainting] = useState(false);
     const [moveSource, setMoveSource] = useState<{ row: number, col: number } | null>(null);
     const [cursorPos, setCursorPos] = useState({ x: -100, y: -100 });
     const mainContainerRef = useRef<HTMLDivElement>(null);
 
+    const [currentLevelName, setCurrentLevelName] = useState<string | null>(levelNameToLoad);
+    const [showSaveAsModal, setShowSaveAsModal] = useState(false);
+    const [saveAsName, setSaveAsName] = useState('');
+    const [showOverwriteModal, setShowOverwriteModal] = useState(false);
+    const [nameToOverwrite, setNameToOverwrite] = useState('');
 
     const createGrid = useCallback(() => {
         const newBoard = Array.from({ length: height }, () => 
@@ -211,10 +246,33 @@ const SandboxGenerator = () => {
         setEditorBoard(newBoard);
         setHistory([{ board: newBoard, width, height }]);
     }, [width, height]);
+    
+    useEffect(() => {
+        if (levelNameToLoad) {
+            const levelData = loadLevel(levelNameToLoad);
+            if (levelData) {
+                setWidth(levelData.width);
+                setHeight(levelData.height);
+                setEditorBoard(levelData.board);
+                setHistory([{ board: levelData.board, width: levelData.width, height: levelData.height }]);
+            } else {
+                 // Handle case where level is not found
+                 onBackToMenu();
+            }
+        } else {
+            createGrid();
+        }
+    }, [levelNameToLoad]);
 
     useEffect(() => {
-        createGrid();
-    }, []);
+        // Debounced or conditional grid creation if size changes
+        const handler = setTimeout(() => {
+            if (!levelNameToLoad) { // Only auto-create for new levels
+                 createGrid();
+            }
+        }, 300);
+        return () => clearTimeout(handler);
+    }, [width, height, levelNameToLoad, createGrid]);
 
     const addToHistory = (entry: HistoryEntry) => {
         setHistory(prev => [...prev.slice(-99), entry]); // Keep last 100 states
@@ -235,51 +293,55 @@ const SandboxGenerator = () => {
         setEditorBoard(newBoard);
         addToHistory({ board: newBoard, width, height });
     };
+    
+    const handleSaveSimple = () => {
+        if (currentLevelName) {
+            saveLevel(currentLevelName, { width, height, board: editorBoard });
+            // You could add a small "Saved!" notification here
+        } else {
+            handleSaveAs();
+        }
+    };
+    
+    const handleSaveAs = () => {
+        const defaultName = currentLevelName || getNextLevelName();
+        setSaveAsName(defaultName);
+        setShowSaveAsModal(true);
+    };
+
+    const confirmSaveAs = () => {
+        const trimmedName = saveAsName.trim();
+        if (!trimmedName) {
+            alert("Имя уровня не может быть пустым.");
+            return;
+        }
+        
+        const existingLevels = getSavedLevels();
+        if (existingLevels.includes(trimmedName) && trimmedName !== currentLevelName) {
+            setNameToOverwrite(trimmedName);
+            setShowOverwriteModal(true);
+        } else {
+            performSave(trimmedName);
+        }
+    };
+
+    const performSave = (name: string) => {
+        saveLevel(name, { width, height, board: editorBoard });
+        setCurrentLevelName(name);
+        setShowSaveAsModal(false);
+        setShowOverwriteModal(false);
+        setNameToOverwrite('');
+    };
+
+    const confirmOverwrite = () => {
+        performSave(nameToOverwrite);
+    };
 
     const handleDrop = (row: number, col: number, tileType: number) => {
         if (activeTool !== 'reset') return;
         const newBoard = editorBoard.map(r => [...r]);
         newBoard[row][col] = tileType;
         updateBoardAndHistory(newBoard);
-    };
-
-    const handleSave = () => {
-        const data = JSON.stringify({ width, height, board: editorBoard });
-        const blob = new Blob([data], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'level.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    };
-
-    const handleLoad = () => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.json';
-        input.onchange = (e) => {
-            const file = (e.target as HTMLInputElement).files?.[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    try {
-                        const data = JSON.parse(event.target?.result as string);
-                        if (data.width && data.height && data.board) {
-                            setWidth(data.width);
-                            setHeight(data.height);
-                            setEditorBoard(data.board);
-                            addToHistory({ board: data.board, width: data.width, height: data.height });
-                        }
-                    } catch (error) {
-                        console.error("Failed to load or parse level file:", error);
-                        alert("Не удалось загрузить файл уровня. Файл поврежден или имеет неверный формат.");
-                    }
-                };
-                reader.readAsText(file);
-            }
-        };
-        input.click();
     };
 
      const boardBeforePaintRef = useRef<EditorBoard | null>(null);
@@ -369,6 +431,8 @@ const SandboxGenerator = () => {
             ) : (
                 <>
                     <div className="flex-shrink-0 bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-2 flex items-center gap-2 flex-wrap shadow-lg">
+                        <button onClick={onBackToMenu} className="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">МЕНЮ</button>
+                        <div className="w-px h-6 bg-slate-600 mx-1"></div>
                         <span className="text-xs uppercase px-2">Ширина</span>
                         <input type="range" min="4" max="12" value={width} onChange={e => setWidth(Number(e.target.value))} className="w-24 accent-cyan-500"/>
                         <span className="font-bold text-cyan-400 w-4">{width}</span>
@@ -376,11 +440,10 @@ const SandboxGenerator = () => {
                         <input type="range" min="4" max="12" value={height} onChange={e => setHeight(Number(e.target.value))} className="w-24 accent-cyan-500"/>
                         <span className="font-bold text-cyan-400 w-4">{height}</span>
 
-                        <button onClick={createGrid} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">СОЗДАТЬ</button>
                         <button onClick={() => setIsPlaying(true)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">▶ PLAY</button>
-                        <button onClick={() => {}} disabled className="bg-red-800 text-red-400/50 font-bold py-2 px-3 rounded-md shadow-md text-xs cursor-not-allowed">■ STOP</button>
-                        <button onClick={handleSave} className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">СОХРАНИТЬ</button>
-                        <button onClick={handleLoad} className="bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">ЗАГРУЗИТЬ</button>
+                        <div className="w-px h-6 bg-slate-600 mx-1"></div>
+                        <button onClick={handleSaveSimple} className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">СОХРАНИТЬ</button>
+                        <button onClick={handleSaveAs} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">СОХРАНИТЬ КАК...</button>
                         <button onClick={handleUndo} disabled={history.length <= 1} className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed">ОТМЕНИТЬ</button>
                     </div>
 
@@ -466,14 +529,119 @@ const SandboxGenerator = () => {
                     )}
                 </>
             )}
+            {showSaveAsModal && (
+                <Modal>
+                    <h3 className="text-xl font-orbitron text-cyan-400 mb-4">Сохранить уровень как</h3>
+                    <input 
+                        type="text" 
+                        value={saveAsName} 
+                        onChange={e => setSaveAsName(e.target.value)}
+                        className="bg-slate-800 border border-slate-600 text-white rounded-md p-2 w-full mb-4 focus:ring-cyan-500 focus:border-cyan-500" 
+                        onKeyDown={(e) => e.key === 'Enter' && confirmSaveAs()}
+                    />
+                    <div className="flex justify-center gap-4">
+                        <button onClick={() => setShowSaveAsModal(false)} className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition-transform transform hover:scale-105">Отмена</button>
+                        <button onClick={confirmSaveAs} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition-transform transform hover:scale-105">Сохранить</button>
+                    </div>
+                </Modal>
+            )}
+            {showOverwriteModal && (
+                <Modal>
+                    <h3 className="text-xl font-orbitron text-red-400 mb-4">Файл существует</h3>
+                    <p className="text-slate-300 mb-6">Уровень с именем "{nameToOverwrite}" уже существует. Перезаписать его?</p>
+                    <div className="flex justify-center gap-4">
+                        <button onClick={() => setShowOverwriteModal(false)} className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition-transform transform hover:scale-105">Нет</button>
+                        <button onClick={confirmOverwrite} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition-transform transform hover:scale-105">Да, перезаписать</button>
+                    </div>
+                </Modal>
+            )}
         </div>
     );
 };
 
-const App = () => {
+// ================= START SCREEN COMPONENT =================
+const StartScreen: React.FC<{ onStart: (levelName: string | null) => void }> = ({ onStart }) => {
+    const [levels, setLevels] = useState<string[]>([]);
+    const [selectedLevel, setSelectedLevel] = useState<string>('');
+
+    useEffect(() => {
+        const savedLevels = getSavedLevels();
+        setLevels(savedLevels);
+        if (savedLevels.length > 0) {
+            setSelectedLevel(savedLevels[0]);
+        }
+    }, []);
+
+    const handleStart = () => {
+        if (levels.length > 0 && selectedLevel) {
+            onStart(selectedLevel);
+        }
+    };
+    
+    const handleNew = () => {
+        onStart(null); // Indicates a new level
+    }
+
     return (
-        <SandboxGenerator />
+        <div className="min-h-screen w-full flex flex-col items-center justify-center p-4 gap-8">
+            <h1 className="text-7xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 font-orbitron">HEXA-CORE EDITOR</h1>
+            <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-8 flex flex-col items-center gap-6 shadow-lg w-full max-w-md">
+                <h2 className="text-2xl font-orbitron text-slate-300">Загрузить уровень</h2>
+                <div className="flex items-center gap-2 w-full">
+                    <select
+                        value={selectedLevel}
+                        onChange={e => setSelectedLevel(e.target.value)}
+                        disabled={levels.length === 0}
+                        className="flex-grow bg-slate-800 border border-slate-600 text-white text-lg rounded-md focus:ring-cyan-500 focus:border-cyan-500 p-3 disabled:opacity-50"
+                    >
+                        {levels.length === 0 ? (
+                            <option>Нет сохраненных уровней</option>
+                        ) : (
+                            levels.map(level => <option key={level} value={level}>{level}</option>)
+                        )}
+                    </select>
+                </div>
+                 <button 
+                    onClick={handleStart} 
+                    disabled={levels.length === 0}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed text-lg font-orbitron"
+                >
+                    ЗАПУСК
+                </button>
+                <div className="relative flex py-2 items-center w-full">
+                    <div className="flex-grow border-t border-slate-600"></div>
+                    <span className="flex-shrink mx-4 text-slate-400">ИЛИ</span>
+                    <div className="flex-grow border-t border-slate-600"></div>
+                </div>
+                 <button onClick={handleNew} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-lg font-orbitron">
+                    НОВЫЙ УРОВЕНЬ
+                </button>
+            </div>
+        </div>
     );
+};
+
+
+// ================= MAIN APP COMPONENT =================
+const App = () => {
+    const [view, setView] = useState<'start' | 'editor'>('start');
+    const [levelToLoad, setLevelToLoad] = useState<string | null>(null);
+
+    const handleStartEditor = (levelName: string | null) => {
+        setLevelToLoad(levelName);
+        setView('editor');
+    };
+    
+    const handleBackToMenu = () => {
+        setView('start');
+        setLevelToLoad(null);
+    };
+
+    if (view === 'start') {
+        return <StartScreen onStart={handleStartEditor} />;
+    }
+
+    return <Editor levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} />;
 };
 
 export default App;
