@@ -28,6 +28,15 @@ export interface LevelData {
   height: number;
   board: EditorBoard;
   finishScore: number;
+  moves: number;
+  // Optional fields for progress data during export/import
+  bestScore?: number;
+  stars?: number;
+}
+
+export interface LevelProgress {
+  bestScore: number;
+  stars: number;
 }
 
 export interface Position {
@@ -65,5 +74,7 @@ export interface GameLogicProps {
     generationConfig: GenerationConfig;
     boardSize: BoardSize;
     isDebugMode?: boolean;
-    finishScore?: number;
+    scoreThresholds: { star1: number; star2: number; star3: number };
+    initialMoves: number;
+    onGameEnd: (result: { score: number; stars: number }) => void;
 }

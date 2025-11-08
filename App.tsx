@@ -7,11 +7,11 @@ import GameWinModal from './components/GameWinModal';
 import GameReadyOverlay from './components/GameReadyOverlay';
 import Controls from './components/Controls';
 import { useSounds } from './hooks/useSounds';
-import { GamePhase, TileData, LevelData, EditorBoard } from './types';
+import { GamePhase, TileData, LevelData, EditorBoard, LevelProgress } from './types';
 import TimingControls from './components/TimingControls';
 import GenerationControls from './components/GenerationControls';
 import BoardSizeControls from './components/BoardSizeControls';
-import { TILE_COLORS, TILE_SHAPES, TILE_NAMES, NORMAL_TILE_TYPES, NORMAL_SPECIAL_TILE_TYPES, UNIQUE_TILE_TYPES, TILE_SHADOWS } from './constants';
+import { TILE_COLORS, TILE_SHAPES, TILE_NAMES, NORMAL_TILE_TYPES, NORMAL_SPECIAL_TILE_TYPES, UNIQUE_TILE_TYPES, TILE_SHADOWS, INITIAL_MOVES } from './constants';
 
 type HistoryEntry = {
   board: EditorBoard;
@@ -28,12 +28,13 @@ const allLibraryTiles = [
 type Tool = 'reset' | 'move' | 'brush' | 'eraser';
 
 // ================= STORAGE UTILS =================
-const STORAGE_PREFIX = 'level_';
+const LEVEL_STORAGE_PREFIX = 'level_';
+const PROGRESS_STORAGE_KEY = 'hexa-core-progress';
 
 const getSavedLevels = (): string[] => {
     return Object.keys(localStorage)
-        .filter(key => key.startsWith(STORAGE_PREFIX))
-        .map(key => key.replace(STORAGE_PREFIX, ''))
+        .filter(key => key.startsWith(LEVEL_STORAGE_PREFIX))
+        .map(key => key.replace(LEVEL_STORAGE_PREFIX, ''))
         .sort((a, b) => {
              const numA = parseInt(a.split('_')[1] || '0');
              const numB = parseInt(b.split('_')[1] || '0');
@@ -57,13 +58,14 @@ const getNextLevelName = (): string => {
     return `level_${maxNum + 1}`;
 };
 
-const saveLevel = (name: string, data: LevelData) => {
+const saveLevel = (name: string, data: Omit<LevelData, 'bestScore' | 'stars'>) => {
     if (!name) return;
-    localStorage.setItem(`${STORAGE_PREFIX}${name}`, JSON.stringify(data));
+    localStorage.setItem(`${LEVEL_STORAGE_PREFIX}${name}`, JSON.stringify(data));
 };
 
-// Type guard that also accounts for old saves without finishScore
-const isPartialLevelData = (data: any): data is Omit<LevelData, 'finishScore'> & { finishScore?: number } => {
+type StoredLevelData = Omit<LevelData, 'bestScore' | 'stars'>;
+
+const isPartialLevelData = (data: any): data is Partial<StoredLevelData> => {
     return (
         typeof data === 'object' &&
         data !== null &&
@@ -72,21 +74,22 @@ const isPartialLevelData = (data: any): data is Omit<LevelData, 'finishScore'> &
         typeof data.height === 'number' && data.height >= 4 && data.height <= 12 &&
         Array.isArray(data.board) &&
         data.board.length === data.height &&
-        data.board.every((row: any) => Array.isArray(row) && row.length === data.width) &&
-        (typeof data.finishScore === 'undefined' || (typeof data.finishScore === 'number' && data.finishScore >= 0))
+        data.board.every((row: any) => Array.isArray(row) && row.length === data.width)
     );
 };
 
-const loadLevel = (name: string): LevelData | null => {
-    const dataStr = localStorage.getItem(`${STORAGE_PREFIX}${name}`);
+const loadLevel = (name: string): StoredLevelData | null => {
+    const dataStr = localStorage.getItem(`${LEVEL_STORAGE_PREFIX}${name}`);
     if (dataStr) {
         try {
             const parsedData = JSON.parse(dataStr);
             if (isPartialLevelData(parsedData)) {
-                 // Return a full LevelData object with a default finishScore if it's missing
                 return {
-                    ...parsedData,
+                    width: parsedData.width!,
+                    height: parsedData.height!,
+                    board: parsedData.board!,
                     finishScore: parsedData.finishScore ?? 1000,
+                    moves: parsedData.moves ?? INITIAL_MOVES,
                 };
             }
             console.error(`Invalid level data structure for level: ${name}`);
@@ -97,6 +100,26 @@ const loadLevel = (name: string): LevelData | null => {
         }
     }
     return null;
+};
+
+const loadAllProgress = (): { [key: string]: LevelProgress } => {
+    try {
+        const progressStr = localStorage.getItem(PROGRESS_STORAGE_KEY);
+        if (progressStr) {
+            return JSON.parse(progressStr);
+        }
+    } catch (error) {
+        console.error("Failed to load progress data:", error);
+    }
+    return {};
+};
+
+const saveAllProgress = (progress: { [key: string]: LevelProgress }) => {
+    try {
+        localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(progress));
+    } catch (error) {
+        console.error("Failed to save progress data:", error);
+    }
 };
 
 const ToolButton: React.FC<{
@@ -120,21 +143,19 @@ const ToolButton: React.FC<{
 
 
 const GameRunner: React.FC<{
-    boardData: EditorBoard;
-    width: number;
-    height: number;
-    finishScore: number;
-    onStop: () => void;
-    onNextLevel: () => void;
+    levelData: StoredLevelData;
+    onGameEnd: (result: { score: number; stars: number }) => void;
+    onPhaseChange: (phase: GamePhase) => void;
+    gamePhase: GamePhase;
     stopButtonLabel?: string;
     isDebugMode?: boolean;
     levelName?: string;
-}> = ({ boardData, width, height, finishScore, onStop, onNextLevel, stopButtonLabel = '■ STOP', isDebugMode = false, levelName = 'untitled' }) => {
+    onStop: () => void;
+}> = ({ levelData, onGameEnd, onPhaseChange, gamePhase, onStop, stopButtonLabel = '■ STOP', isDebugMode = false, levelName = 'untitled' }) => {
     const { playSound, isMuted, toggleMute } = useSounds();
     const [isPaused, setIsPaused] = useState(true);
     const [stepTrigger, setStepTrigger] = useState(0);
     const [isStepMode, setIsStepMode] = useState(false);
-    const [gamePhase, setGamePhase] = useState<GamePhase>('READY');
     
     const [timingConfig, setTimingConfig] = useState({ swapDelay: 300, matchDelay: 400, fallDelay: 300, gameSpeed: 1 });
     const [generationConfig, setGenerationConfig] = useState(() => {
@@ -156,21 +177,28 @@ const GameRunner: React.FC<{
         };
     });
     
-    const boardSize = { width, height };
+    const boardSize = { width: levelData.width, height: levelData.height };
+    const scoreThresholds = {
+        star1: levelData.finishScore,
+        star2: levelData.finishScore * 1.25,
+        star3: levelData.finishScore * 1.50,
+    };
 
     const { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef } = useGameLogic({
         playSound,
         timingConfig,
         isPaused,
         stepTrigger,
-        onPhaseChange: setGamePhase,
+        onPhaseChange,
         gamePhase,
         isStepMode,
         autoPause: () => { if (isStepMode) setIsPaused(true); },
         generationConfig,
         boardSize,
         isDebugMode,
-        finishScore
+        scoreThresholds,
+        initialMoves: levelData.moves,
+        onGameEnd,
     });
     
     const createInitialBoardFromEditor = useCallback(() => {
@@ -180,9 +208,9 @@ const GameRunner: React.FC<{
             .map(([type]) => Number(type));
             
         const newBoard: TileData[] = [];
-        for (let r = 0; r < height; r++) {
-            for (let c = 0; c < width; c++) {
-                const typeFromEditor = boardData[r]?.[c];
+        for (let r = 0; r < levelData.height; r++) {
+            for (let c = 0; c < levelData.width; c++) {
+                const typeFromEditor = levelData.board[r]?.[c];
                 const type = (typeFromEditor === null || typeFromEditor === undefined)
                     ? availableTypes[Math.floor(Math.random() * availableTypes.length)]
                     : typeFromEditor;
@@ -193,15 +221,15 @@ const GameRunner: React.FC<{
             console.log('[DEBUG] Creating initial board from editor data:', newBoard);
         }
         return newBoard;
-    }, [width, height, boardData, generationConfig.enabledNormal, isDebugMode]);
+    }, [levelData, generationConfig.enabledNormal, isDebugMode]);
     
     useEffect(() => {
         restartGame(createInitialBoardFromEditor());
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [createInitialBoardFromEditor, restartGame]);
 
     const handleReadySequenceEnd = () => {
         setIsPaused(false);
+        onPhaseChange('IDLE');
     };
 
     const handleStep = () => {
@@ -256,7 +284,7 @@ const GameRunner: React.FC<{
                     {gamePhase === 'READY' && <GameReadyOverlay onFinished={handleReadySequenceEnd} />}
                 </div>
                 <div className="flex flex-col gap-4 w-full md:w-56">
-                     <GameInfo score={score} moves={moves} level={level} finishScore={finishScore} />
+                     <GameInfo score={score} moves={moves} level={level} scoreThresholds={scoreThresholds} />
                      <Controls 
                         isAiActive={false}
                         onToggleAi={() => {}}
@@ -276,8 +304,6 @@ const GameRunner: React.FC<{
                      />
                 </div>
             </div>
-            <GameOverModal isOpen={moves <= 0 && gamePhase === 'GAME_OVER'} score={score} onRestart={() => restartGame(createInitialBoardFromEditor())} />
-            <GameWinModal isOpen={gamePhase === 'WIN'} score={score} onMenu={onStop} onNext={onNextLevel} />
         </div>
     );
 };
@@ -296,6 +322,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     const [width, setWidth] = useState(8);
     const [height, setHeight] = useState(8);
     const [finishScore, setFinishScore] = useState(1000);
+    const [moves, setMoves] = useState(INITIAL_MOVES);
     const [editorBoard, setEditorBoard] = useState<EditorBoard>([]);
     const [isPlaying, setIsPlaying] = useState(false);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -329,6 +356,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
                 setHeight(levelData.height);
                 setEditorBoard(levelData.board);
                 setFinishScore(levelData.finishScore);
+                setMoves(levelData.moves);
                 setHistory([{ board: levelData.board, width: levelData.width, height: levelData.height }]);
             } else {
                  onBackToMenu();
@@ -369,7 +397,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     
     const handleSaveSimple = () => {
         if (currentLevelName) {
-            saveLevel(currentLevelName, { width, height, board: editorBoard, finishScore });
+            saveLevel(currentLevelName, { width, height, board: editorBoard, finishScore, moves });
         } else {
             handleSaveAs();
         }
@@ -398,7 +426,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     };
 
     const performSave = (name: string) => {
-        saveLevel(name, { width, height, board: editorBoard, finishScore });
+        saveLevel(name, { width, height, board: editorBoard, finishScore, moves });
         setCurrentLevelName(name);
         setShowSaveAsModal(false);
         setShowOverwriteModal(false);
@@ -496,10 +524,23 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
         setActiveTool('reset');
     };
     
+    const editorLevelData = { width, height, board: editorBoard, finishScore, moves };
+
     return (
         <div ref={mainContainerRef} onMouseMove={handleMouseMove} className="min-h-screen w-full flex flex-col items-center p-4 gap-4 overflow-hidden">
             {isPlaying ? (
-                <GameRunner boardData={editorBoard} width={width} height={height} finishScore={finishScore} onStop={() => setIsPlaying(false)} onNextLevel={() => setIsPlaying(false)} levelName={currentLevelName || 'new-level'} />
+                <PlayScreenInternal
+                    levelData={editorLevelData}
+                    levelName={currentLevelName || 'new-level'}
+                    onBackToMenu={() => setIsPlaying(false)}
+                    onNextLevel={() => setIsPlaying(false)}
+                    onReplay={() => {
+                        // This will just stop playtesting and return to editor
+                        setIsPlaying(false);
+                        setTimeout(() => setIsPlaying(true), 50);
+                    }}
+                    isDebugMode={false} // Debug mode is not available for test runs
+                />
             ) : (
                 <>
                     <div className="flex-shrink-0 bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-2 flex items-center gap-2 flex-wrap shadow-lg">
@@ -512,8 +553,10 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
                         <input type="range" min="4" max="12" value={height} onChange={e => setHeight(Number(e.target.value))} className="w-24 accent-cyan-500"/>
                         <span className="font-bold text-cyan-400 w-4">{height}</span>
                          <div className="w-px h-6 bg-slate-600 mx-1"></div>
-                        <span className="text-xs uppercase px-2">Очки</span>
+                        <span className="text-xs uppercase px-2">Очки (1★)</span>
                         <input type="number" step="100" min="0" value={finishScore} onChange={e => setFinishScore(Math.max(0, Number(e.target.value)))} className="bg-slate-800 border border-slate-600 rounded-md w-24 p-1 text-center font-bold text-cyan-400"/>
+                        <span className="text-xs uppercase px-2">Ходы</span>
+                        <input type="number" step="1" min="1" value={moves} onChange={e => setMoves(Math.max(1, Number(e.target.value)))} className="bg-slate-800 border border-slate-600 rounded-md w-20 p-1 text-center font-bold text-cyan-400"/>
 
                         <button onClick={() => setIsPlaying(true)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">▶ PLAY</button>
                         <div className="w-px h-6 bg-slate-600 mx-1"></div>
@@ -634,32 +677,90 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     );
 };
 
+// ================= PLAY SCREEN HELPER =================
+const PlayScreenInternal: React.FC<{
+    levelData: StoredLevelData;
+    levelName: string;
+    onBackToMenu: () => void;
+    onNextLevel: () => void;
+    onReplay: () => void;
+    isDebugMode: boolean;
+}> = ({ levelData, levelName, onBackToMenu, onNextLevel, onReplay, isDebugMode }) => {
+    const [gamePhase, setGamePhase] = useState<GamePhase>('READY');
+    const [gameResult, setGameResult] = useState<{ score: number, stars: number } | null>(null);
+
+    const handleGameEnd = useCallback((result: { score: number, stars: number }) => {
+        setGameResult(result);
+        const allProgress = loadAllProgress();
+        const existingProgress = allProgress[levelName];
+
+        if (!existingProgress || result.score > existingProgress.bestScore) {
+            allProgress[levelName] = { bestScore: result.score, stars: result.stars };
+            saveAllProgress(allProgress);
+        }
+    }, [levelName]);
+
+    return (
+        <div className="min-h-screen w-full flex flex-col items-center p-4">
+            <GameRunner
+                levelData={levelData}
+                onGameEnd={handleGameEnd}
+                onPhaseChange={setGamePhase}
+                gamePhase={gamePhase}
+                onStop={onBackToMenu}
+                stopButtonLabel="ВЫХОД В МЕНЮ"
+                isDebugMode={isDebugMode}
+                levelName={levelName}
+            />
+            {gameResult && gamePhase === 'WIN' && (
+                <GameWinModal
+                    isOpen={true}
+                    score={gameResult.score}
+                    stars={gameResult.stars}
+                    onMenu={onBackToMenu}
+                    onNext={onNextLevel}
+                    onReplay={onReplay}
+                />
+            )}
+            {gameResult && gamePhase === 'GAME_OVER' && (
+                 <GameOverModal
+                    isOpen={true}
+                    score={gameResult.score}
+                    onReplay={onReplay}
+                />
+            )}
+        </div>
+    );
+}
+
 // ================= PLAY SCREEN COMPONENT =================
-const PlayScreen: React.FC<{ 
-    levelNameToLoad: string; 
-    onBackToMenu: () => void; 
+const PlayScreen: React.FC<{
+    levelNameToLoad: string;
+    onBackToMenu: () => void;
     isDebugMode: boolean;
     onLoadLevel: (levelName: string) => void;
 }> = ({ levelNameToLoad, onBackToMenu, isDebugMode, onLoadLevel }) => {
-    const [levelData, setLevelData] = useState<LevelData | null>(null);
+    const [levelData, setLevelData] = useState<StoredLevelData | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [gameKey, setGameKey] = useState(0); // Used to force re-mount on replay
 
     useEffect(() => {
         setError(null);
         const data = loadLevel(levelNameToLoad);
         if (data) {
             setLevelData(data);
+            setGameKey(k => k + 1); // Ensure GameRunner remounts if level changes
         } else {
             setError(`Не удалось загрузить уровень: ${levelNameToLoad}`);
         }
     }, [levelNameToLoad]);
-    
+
     const handleNextLevel = () => {
         const currentNumMatch = levelNameToLoad.match(/_(\d+)$/);
         if (currentNumMatch) {
             const currentNum = parseInt(currentNumMatch[1], 10);
             const nextLevelName = levelNameToLoad.replace(`_${currentNum}`, `_${currentNum + 1}`);
-            
+
             const savedLevels = getSavedLevels();
             if (savedLevels.includes(nextLevelName)) {
                 onLoadLevel(nextLevelName);
@@ -670,6 +771,10 @@ const PlayScreen: React.FC<{
         } else {
             onBackToMenu();
         }
+    };
+
+    const handleReplay = () => {
+        setGameKey(k => k + 1); // Remounts GameRunner, effectively restarting the level
     };
 
     if (error) {
@@ -692,21 +797,31 @@ const PlayScreen: React.FC<{
     }
 
     return (
-        <div className="min-h-screen w-full flex flex-col items-center p-4">
-             <GameRunner 
-                boardData={levelData.board} 
-                width={levelData.width} 
-                height={levelData.height}
-                finishScore={levelData.finishScore}
-                onStop={onBackToMenu}
-                onNextLevel={handleNextLevel}
-                stopButtonLabel="ВЫХОД В МЕНЮ"
-                isDebugMode={isDebugMode}
-                levelName={levelNameToLoad}
-             />
-        </div>
+       <PlayScreenInternal
+            key={gameKey}
+            levelData={levelData}
+            levelName={levelNameToLoad}
+            onBackToMenu={onBackToMenu}
+            onNextLevel={handleNextLevel}
+            onReplay={handleReplay}
+            isDebugMode={isDebugMode}
+       />
     );
 };
+
+const StarRating: React.FC<{ stars: number; size?: 'sm' | 'lg' }> = ({ stars, size = 'sm' }) => (
+    <div className="flex">
+        {[1, 2, 3].map(i => (
+            <span key={i} className={`
+                ${i <= stars ? 'text-yellow-400' : 'text-slate-600'}
+                ${size === 'sm' ? 'text-2xl' : 'text-5xl'}
+            `}>
+                ★
+            </span>
+        ))}
+    </div>
+);
+
 
 // ================= START SCREEN COMPONENT =================
 const StartScreen: React.FC<{
@@ -716,36 +831,19 @@ const StartScreen: React.FC<{
     onDebugModeChange: (isEnabled: boolean) => void;
 }> = ({ onPlay, onEdit, isDebugMode, onDebugModeChange }) => {
     const [levels, setLevels] = useState<string[]>([]);
-    const [selectedLevel, setSelectedLevel] = useState<string>('');
+    const [progress, setProgress] = useState<{ [key: string]: LevelProgress }>({});
     const importInputRef = useRef<HTMLInputElement>(null);
 
-    const refreshLevels = useCallback(() => {
+    const refreshData = useCallback(() => {
         const savedLevels = getSavedLevels();
+        const savedProgress = loadAllProgress();
         setLevels(savedLevels);
-        if (savedLevels.length > 0) {
-            if (!savedLevels.includes(selectedLevel)) {
-                setSelectedLevel(savedLevels[0]);
-            }
-        } else {
-            setSelectedLevel('');
-        }
-    }, [selectedLevel]);
+        setProgress(savedProgress);
+    }, []);
 
     useEffect(() => {
-        refreshLevels();
-    }, [refreshLevels]);
-
-    const handlePlayClick = () => {
-        if (levels.length > 0 && selectedLevel) {
-            onPlay(selectedLevel);
-        }
-    };
-    
-    const handleEditClick = () => {
-        if (levels.length > 0 && selectedLevel) {
-            onEdit(selectedLevel);
-        }
-    };
+        refreshData();
+    }, [refreshData]);
 
     const handleNewClick = () => {
         onEdit(null); // Indicates a new level
@@ -757,11 +855,18 @@ const StartScreen: React.FC<{
             alert("Нет уровней для экспорта.");
             return;
         }
+        const allProgress = loadAllProgress();
         const exportData: { [key: string]: LevelData } = {};
+        
         savedLevels.forEach(levelName => {
             const levelData = loadLevel(levelName);
             if (levelData) {
-                exportData[levelName] = levelData;
+                const levelProgress = allProgress[levelName];
+                exportData[levelName] = {
+                    ...levelData,
+                    bestScore: levelProgress?.bestScore || 0,
+                    stars: levelProgress?.stars || 0,
+                };
             }
         });
 
@@ -790,39 +895,42 @@ const StartScreen: React.FC<{
         reader.onload = (e) => {
             try {
                 const text = e.target?.result;
-                if (typeof text !== 'string') {
-                    throw new Error("Не удалось прочитать файл.");
-                }
-                const importedData = JSON.parse(text);
+                if (typeof text !== 'string') throw new Error("Не удалось прочитать файл.");
                 
+                const importedData = JSON.parse(text);
                 if (typeof importedData !== 'object' || importedData === null || Array.isArray(importedData)) {
                      throw new Error("Неверный формат файла.");
                 }
 
+                const allProgress = loadAllProgress();
                 let importedCount = 0;
-                Object.entries(importedData).forEach(([levelName, levelData]) => {
-                    if (isPartialLevelData(levelData)) {
-                        const fullLevelData: LevelData = {
-                             ...(levelData as any),
-                             finishScore: (levelData as any).finishScore ?? 1000,
-                        };
-                        saveLevel(levelName, fullLevelData);
+
+                Object.entries(importedData).forEach(([levelName, data]) => {
+                    if (isPartialLevelData(data)) {
+                        const { bestScore, stars, ...levelDesign } = data as LevelData;
+                        saveLevel(levelName, levelDesign);
+
+                        if (typeof bestScore === 'number' && typeof stars === 'number' && (bestScore > 0 || stars > 0)) {
+                            const localProgress = allProgress[levelName];
+                            if (!localProgress || bestScore > localProgress.bestScore) {
+                                allProgress[levelName] = { bestScore, stars };
+                            }
+                        }
                         importedCount++;
                     } else {
                         console.warn(`Пропущен неверный уровень '${levelName}' при импорте.`);
                     }
                 });
                 
+                saveAllProgress(allProgress);
                 alert(`Импорт завершен! Загружено ${importedCount} уровней.`);
-                refreshLevels();
+                refreshData();
 
             } catch (error) {
                 console.error("Ошибка импорта:", error);
                 alert(`Ошибка импорта: ${error instanceof Error ? error.message : "Неизвестная ошибка"}`);
             } finally {
-                if (event.target) {
-                    event.target.value = '';
-                }
+                if (event.target) event.target.value = '';
             }
         };
         reader.readAsText(file);
@@ -831,40 +939,34 @@ const StartScreen: React.FC<{
     return (
         <div className="min-h-screen w-full flex flex-col items-center justify-center p-4 gap-8">
             <h1 className="text-7xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 font-orbitron">HEXA-CORE</h1>
-            <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-8 flex flex-col items-center gap-6 shadow-lg w-full max-w-lg">
+            <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-8 flex flex-col items-center gap-6 shadow-lg w-full max-w-2xl">
                 <h2 className="text-2xl font-orbitron text-slate-300">ВЫБЕРИТЕ УРОВЕНЬ</h2>
-                <div className="flex items-center gap-2 w-full">
-                    <select
-                        value={selectedLevel}
-                        onChange={e => setSelectedLevel(e.target.value)}
-                        disabled={levels.length === 0}
-                        className="flex-grow bg-slate-800 border border-slate-600 text-white text-lg rounded-md focus:ring-cyan-500 focus:border-cyan-500 p-3 disabled:opacity-50"
-                    >
-                        {levels.length === 0 ? (
-                            <option>Нет сохраненных уровней</option>
-                        ) : (
-                            levels.map(level => <option key={level} value={level}>{level}</option>)
-                        )}
-                    </select>
+                
+                <div className="w-full h-64 overflow-y-auto bg-slate-800/50 border border-slate-600 rounded-lg p-2 flex flex-col gap-2">
+                    {levels.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-slate-400">Нет сохраненных уровней</div>
+                    ) : (
+                        levels.map(level => (
+                            <div key={level} className="flex items-center gap-4 bg-slate-900/70 p-2 rounded-md border border-transparent hover:border-cyan-500 transition-colors">
+                                <div className="flex-grow flex items-center gap-4">
+                                    <StarRating stars={progress[level]?.stars || 0} />
+                                    <span className="text-lg text-white">{level}</span>
+                                </div>
+                                <button onClick={() => onEdit(level)} className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">РЕДАКТ.</button>
+                                <button onClick={() => onPlay(level)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">ИГРАТЬ</button>
+                            </div>
+                        ))
+                    )}
                 </div>
-                 <button 
-                    onClick={handlePlayClick} 
-                    disabled={levels.length === 0}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed text-lg font-orbitron"
-                >
-                    ИГРАТЬ
-                </button>
+
                 <div className="relative flex py-2 items-center w-full">
                     <div className="flex-grow border-t border-slate-600"></div>
                     <span className="flex-shrink mx-4 text-slate-400 font-orbitron">РЕДАКТОР</span>
                     <div className="flex-grow border-t border-slate-600"></div>
                 </div>
-                 <div className="flex gap-4 w-full">
-                    <button onClick={handleEditClick} disabled={levels.length === 0} className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-sky-500 text-lg font-orbitron disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed">
-                        РЕДАКТИРОВАТЬ
-                    </button>
-                    <button onClick={handleNewClick} className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-lg font-orbitron">
-                        СОЗДАТЬ НОВЫЙ
+                 <div className="w-full">
+                    <button onClick={handleNewClick} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-lg font-orbitron">
+                        СОЗДАТЬ НОВЫЙ УРОВЕНЬ
                     </button>
                 </div>
 

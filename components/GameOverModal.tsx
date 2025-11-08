@@ -3,10 +3,10 @@ import React from 'react';
 interface GameOverModalProps {
   isOpen: boolean;
   score: number;
-  onRestart: () => void;
+  onReplay: () => void;
 }
 
-const GameOverModal: React.FC<GameOverModalProps> = ({ isOpen, score, onRestart }) => {
+const GameOverModal: React.FC<GameOverModalProps> = ({ isOpen, score, onReplay }) => {
   if (!isOpen) return null;
 
   return (
@@ -19,10 +19,10 @@ const GameOverModal: React.FC<GameOverModalProps> = ({ isOpen, score, onRestart 
             <p className="text-6xl font-bold text-cyan-400 font-orbitron">{score}</p>
         </div>
         <button
-          onClick={onRestart}
+          onClick={onReplay}
           className="w-full bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-fuchsia-500 focus:ring-opacity-50 border-t-2 border-fuchsia-400"
         >
-          Перезапустить ядро
+          Переиграть
         </button>
       </div>
        <style>{`
