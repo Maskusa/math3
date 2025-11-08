@@ -59,6 +59,7 @@ export interface GameLogicProps {
     isPaused: boolean;
     stepTrigger: number;
     onPhaseChange: (phase: GamePhase) => void;
+    gamePhase: GamePhase;
     isStepMode: boolean;
     autoPause: () => void;
     generationConfig: GenerationConfig;

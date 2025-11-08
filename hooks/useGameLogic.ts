@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BoardType, GameLogicProps, Position, TileData } from '../types';
+import { BoardType, GameLogicProps, GamePhase, Position, TileData } from '../types';
 import { INITIAL_MOVES, TILE_TYPE_BOMB, TILE_TYPE_LASER_H, TILE_TYPE_LASER_V } from '../constants';
 
 const areAdjacent = (pos1: Position, pos2: Position) => {
@@ -12,6 +12,7 @@ export const useGameLogic = ({
     isPaused,
     stepTrigger,
     onPhaseChange,
+    gamePhase,
     autoPause,
     generationConfig,
     boardSize,
@@ -149,7 +150,7 @@ export const useGameLogic = ({
     }, [boardSize, generationConfig.enabledNormal]);
 
     const gameLoop = useCallback(async (currentBoard: BoardType, specialTilesToActivate: TileData[] = []) => {
-        if (isProcessingRef.current) return;
+        if (isProcessingRef.current || gamePhase === 'WIN' || gamePhase === 'GAME_OVER') return;
         setIsProcessing(true);
 
         let boardState = currentBoard.map(t => ({...t}));
@@ -312,7 +313,7 @@ export const useGameLogic = ({
             onPhaseChange('IDLE');
         }
         setIsProcessing(false);
-    }, [isPaused, boardSize, findMatches, playSound, setScore, onPhaseChange, autoPause, delay, timingConfig, getRandomTileType, moves, log, group, groupEnd, finishScore]);
+    }, [isPaused, boardSize, findMatches, playSound, setScore, onPhaseChange, autoPause, delay, timingConfig, getRandomTileType, moves, log, group, groupEnd, finishScore, gamePhase]);
     
     const handleTileClick = useCallback(async (row: number, col: number) => {
         if (isProcessingRef.current || isPaused || moves <= 0) return;
@@ -396,7 +397,7 @@ export const useGameLogic = ({
     }, [boardSize]);
     
     useEffect(() => {
-        if (!isPaused) {
+        if (!isPaused && gamePhase !== 'WIN' && gamePhase !== 'GAME_OVER') {
             // When un-paused (e.g., after the "Ready" screen or user clicks Play),
             // we should kick off the game loop to check for initial matches.
             // The gameLoop function itself has a re-entry guard, so this is safe.
@@ -404,7 +405,7 @@ export const useGameLogic = ({
         } else {
             clearTimeouts();
         }
-    }, [isPaused, stepTrigger, board, gameLoop, clearTimeouts]);
+    }, [isPaused, stepTrigger, board, gameLoop, clearTimeouts, gamePhase]);
 
     const toggleAi = () => setIsAiActive(p => !p);
     const toggleHints = () => setShowHints(p => !p);

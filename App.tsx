@@ -164,6 +164,7 @@ const GameRunner: React.FC<{
         isPaused,
         stepTrigger,
         onPhaseChange: setGamePhase,
+        gamePhase,
         isStepMode,
         autoPause: () => { if (isStepMode) setIsPaused(true); },
         generationConfig,
