@@ -1,18 +1,18 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameLogic } from './hooks/useGameLogic';
 import GameBoard from './components/GameBoard';
 import GameInfo from './components/GameInfo';
 import GameOverModal from './components/GameOverModal';
+import GameWinModal from './components/GameWinModal';
+import GameReadyOverlay from './components/GameReadyOverlay';
 import Controls from './components/Controls';
 import { useSounds } from './hooks/useSounds';
-import { GamePhase, TileData, BoardSize, TimingConfig, GenerationConfig } from './types';
+import { GamePhase, TileData, LevelData, EditorBoard } from './types';
 import TimingControls from './components/TimingControls';
 import GenerationControls from './components/GenerationControls';
 import BoardSizeControls from './components/BoardSizeControls';
 import { TILE_COLORS, TILE_SHAPES, TILE_NAMES, NORMAL_TILE_TYPES, NORMAL_SPECIAL_TILE_TYPES, UNIQUE_TILE_TYPES, TILE_SHADOWS } from './constants';
 
-type EditorBoard = (number | null)[][];
 type HistoryEntry = {
   board: EditorBoard;
   width: number;
@@ -34,7 +34,11 @@ const getSavedLevels = (): string[] => {
     return Object.keys(localStorage)
         .filter(key => key.startsWith(STORAGE_PREFIX))
         .map(key => key.replace(STORAGE_PREFIX, ''))
-        .sort();
+        .sort((a, b) => {
+             const numA = parseInt(a.split('_')[1] || '0');
+             const numB = parseInt(b.split('_')[1] || '0');
+             return numA - numB;
+        });
 };
 
 const getNextLevelName = (): string => {
@@ -53,13 +57,13 @@ const getNextLevelName = (): string => {
     return `level_${maxNum + 1}`;
 };
 
-const saveLevel = (name: string, data: { width: number, height: number, board: EditorBoard }) => {
+const saveLevel = (name: string, data: LevelData) => {
     if (!name) return;
     localStorage.setItem(`${STORAGE_PREFIX}${name}`, JSON.stringify(data));
 };
 
-// Type guard for robust level data validation
-const isLevelData = (data: any): data is { width: number, height: number, board: EditorBoard } => {
+// Type guard that also accounts for old saves without finishScore
+const isPartialLevelData = (data: any): data is Omit<LevelData, 'finishScore'> & { finishScore?: number } => {
     return (
         typeof data === 'object' &&
         data !== null &&
@@ -68,17 +72,22 @@ const isLevelData = (data: any): data is { width: number, height: number, board:
         typeof data.height === 'number' && data.height >= 4 && data.height <= 12 &&
         Array.isArray(data.board) &&
         data.board.length === data.height &&
-        data.board.every((row: any) => Array.isArray(row) && row.length === data.width)
+        data.board.every((row: any) => Array.isArray(row) && row.length === data.width) &&
+        (typeof data.finishScore === 'undefined' || (typeof data.finishScore === 'number' && data.finishScore >= 0))
     );
 };
 
-const loadLevel = (name: string): { width: number, height: number, board: EditorBoard } | null => {
+const loadLevel = (name: string): LevelData | null => {
     const dataStr = localStorage.getItem(`${STORAGE_PREFIX}${name}`);
     if (dataStr) {
         try {
             const parsedData = JSON.parse(dataStr);
-            if (isLevelData(parsedData)) {
-                return parsedData;
+            if (isPartialLevelData(parsedData)) {
+                 // Return a full LevelData object with a default finishScore if it's missing
+                return {
+                    ...parsedData,
+                    finishScore: parsedData.finishScore ?? 1000,
+                };
             }
             console.error(`Invalid level data structure for level: ${name}`);
             return null;
@@ -114,17 +123,21 @@ const GameRunner: React.FC<{
     boardData: EditorBoard;
     width: number;
     height: number;
+    finishScore: number;
     onStop: () => void;
+    onNextLevel: () => void;
     stopButtonLabel?: string;
-}> = ({ boardData, width, height, onStop, stopButtonLabel = '■ STOP' }) => {
+    isDebugMode?: boolean;
+    levelName?: string;
+}> = ({ boardData, width, height, finishScore, onStop, onNextLevel, stopButtonLabel = '■ STOP', isDebugMode = false, levelName = 'untitled' }) => {
     const { playSound, isMuted, toggleMute } = useSounds();
     const [isPaused, setIsPaused] = useState(true);
     const [stepTrigger, setStepTrigger] = useState(0);
     const [isStepMode, setIsStepMode] = useState(false);
-    const [gamePhase, setGamePhase] = useState<GamePhase>('IDLE');
+    const [gamePhase, setGamePhase] = useState<GamePhase>('READY');
     
-    const [timingConfig, setTimingConfig] = useState<TimingConfig>({ swapDelay: 300, matchDelay: 400, fallDelay: 300, gameSpeed: 1 });
-    const [generationConfig, setGenerationConfig] = useState<GenerationConfig>(() => {
+    const [timingConfig, setTimingConfig] = useState({ swapDelay: 300, matchDelay: 400, fallDelay: 300, gameSpeed: 1 });
+    const [generationConfig, setGenerationConfig] = useState(() => {
         const enabledNormal: { [key: number]: boolean } = {};
         for (let i = 0; i < NORMAL_TILE_TYPES; i++) {
             enabledNormal[i] = true;
@@ -145,7 +158,7 @@ const GameRunner: React.FC<{
     
     const boardSize = { width, height };
 
-    const { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing } = useGameLogic({
+    const { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef } = useGameLogic({
         playSound,
         timingConfig,
         isPaused,
@@ -155,6 +168,8 @@ const GameRunner: React.FC<{
         autoPause: () => { if (isStepMode) setIsPaused(true); },
         generationConfig,
         boardSize,
+        isDebugMode,
+        finishScore
     });
     
     const createInitialBoardFromEditor = useCallback(() => {
@@ -173,39 +188,74 @@ const GameRunner: React.FC<{
                 newBoard.push({ id: idCounter++, type, row: r, col: c });
             }
         }
+        if (isDebugMode) {
+            console.log('[DEBUG] Creating initial board from editor data:', newBoard);
+        }
         return newBoard;
-    }, [width, height, boardData, generationConfig.enabledNormal]);
+    }, [width, height, boardData, generationConfig.enabledNormal, isDebugMode]);
     
     useEffect(() => {
         restartGame(createInitialBoardFromEditor());
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handlePlay = () => setIsPaused(false);
-    const handlePause = () => setIsPaused(true);
+    const handleReadySequenceEnd = () => {
+        setIsPaused(false);
+    };
+
     const handleStep = () => {
         if (isPaused) {
             setStepTrigger(v => v + 1);
         }
     };
     
+    const handleDownloadLog = () => {
+        if (!logCollectorRef.current) return;
+        const logData = logCollectorRef.current.join('\n');
+        const blob = new Blob([logData], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.download = `hexa-core-log-${levelName.replace(/ /g, '_')}-${timestamp}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div className="w-full flex flex-col items-center gap-4">
-            <button
-                onClick={onStop}
-                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105"
-            >
-                {stopButtonLabel}
-            </button>
+            <div className="flex items-center gap-4">
+                <button
+                    onClick={onStop}
+                    className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105"
+                >
+                    {stopButtonLabel}
+                </button>
+                {isDebugMode && (
+                    <button
+                        onClick={handleDownloadLog}
+                        className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105"
+                        title="Скачать журнал отладки для этой сессии"
+                    >
+                        СКАЧАТЬ ЛОГ
+                    </button>
+                )}
+            </div>
             <div className="flex flex-col md:flex-row items-start justify-center gap-6">
-                <GameBoard
-                    board={board}
-                    onTileClick={handleTileClick}
-                    selectedTile={selectedTile}
-                    isProcessing={isProcessing}
-                    boardSize={boardSize}
-                />
+                <div className="relative">
+                    <GameBoard
+                        board={board}
+                        onTileClick={handleTileClick}
+                        selectedTile={selectedTile}
+                        isProcessing={isProcessing || gamePhase === 'READY'}
+                        boardSize={boardSize}
+                    />
+                    {gamePhase === 'READY' && <GameReadyOverlay onFinished={handleReadySequenceEnd} />}
+                </div>
                 <div className="flex flex-col gap-4 w-full md:w-56">
-                     <GameInfo score={score} moves={moves} level={level} />
+                     <GameInfo score={score} moves={moves} level={level} finishScore={finishScore} />
                      <Controls 
                         isAiActive={false}
                         onToggleAi={() => {}}
@@ -215,8 +265,8 @@ const GameRunner: React.FC<{
                         onToggleMute={toggleMute}
                         isProcessing={isProcessing}
                         isPaused={isPaused}
-                        onPlay={handlePlay}
-                        onPause={handlePause}
+                        onPlay={() => setIsPaused(false)}
+                        onPause={() => setIsPaused(true)}
                         onStep={handleStep}
                         gamePhase={gamePhase}
                         onRestart={() => restartGame(createInitialBoardFromEditor())}
@@ -226,6 +276,7 @@ const GameRunner: React.FC<{
                 </div>
             </div>
             <GameOverModal isOpen={moves <= 0 && gamePhase === 'GAME_OVER'} score={score} onRestart={() => restartGame(createInitialBoardFromEditor())} />
+            <GameWinModal isOpen={gamePhase === 'WIN'} score={score} onMenu={onStop} onNext={onNextLevel} />
         </div>
     );
 };
@@ -243,6 +294,7 @@ const Modal: React.FC<{ children: React.ReactNode; className?: string }> = ({ ch
 const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => void }> = ({ levelNameToLoad, onBackToMenu }) => {
     const [width, setWidth] = useState(8);
     const [height, setHeight] = useState(8);
+    const [finishScore, setFinishScore] = useState(1000);
     const [editorBoard, setEditorBoard] = useState<EditorBoard>([]);
     const [isPlaying, setIsPlaying] = useState(false);
     const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -275,6 +327,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
                 setWidth(levelData.width);
                 setHeight(levelData.height);
                 setEditorBoard(levelData.board);
+                setFinishScore(levelData.finishScore);
                 setHistory([{ board: levelData.board, width: levelData.width, height: levelData.height }]);
             } else {
                  onBackToMenu();
@@ -293,9 +346,9 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
         return () => clearTimeout(handler);
     }, [width, height, levelNameToLoad, createGrid]);
 
-    const addToHistory = (entry: HistoryEntry) => {
+    const addToHistory = useCallback((entry: { board: EditorBoard, width: number, height: number }) => {
         setHistory(prev => [...prev.slice(-99), entry]);
-    };
+    }, []);
 
     const handleUndo = () => {
         if (history.length > 1) {
@@ -315,7 +368,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     
     const handleSaveSimple = () => {
         if (currentLevelName) {
-            saveLevel(currentLevelName, { width, height, board: editorBoard });
+            saveLevel(currentLevelName, { width, height, board: editorBoard, finishScore });
         } else {
             handleSaveAs();
         }
@@ -344,7 +397,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     };
 
     const performSave = (name: string) => {
-        saveLevel(name, { width, height, board: editorBoard });
+        saveLevel(name, { width, height, board: editorBoard, finishScore });
         setCurrentLevelName(name);
         setShowSaveAsModal(false);
         setShowOverwriteModal(false);
@@ -393,7 +446,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
         }
     };
 
-    const handleCellMouseUp = () => {
+    const handleCellMouseUp = useCallback(() => {
         if (isPainting) {
             setIsPainting(false);
             if (boardBeforePaintRef.current !== editorBoard) {
@@ -401,7 +454,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
             }
             boardBeforePaintRef.current = null;
         }
-    };
+    }, [isPainting, editorBoard, width, height, addToHistory]);
     
     const handleCellClick = (row: number, col: number) => {
         if (activeTool !== 'move') return;
@@ -435,7 +488,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
         const upListener = () => handleCellMouseUp();
         window.addEventListener('mouseup', upListener);
         return () => window.removeEventListener('mouseup', upListener);
-    }, [isPainting]);
+    }, [handleCellMouseUp]);
 
     const handleDragStart = (e: React.DragEvent, tileType: number) => {
         e.dataTransfer.setData('tileType', tileType.toString());
@@ -445,7 +498,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     return (
         <div ref={mainContainerRef} onMouseMove={handleMouseMove} className="min-h-screen w-full flex flex-col items-center p-4 gap-4 overflow-hidden">
             {isPlaying ? (
-                <GameRunner boardData={editorBoard} width={width} height={height} onStop={() => setIsPlaying(false)} />
+                <GameRunner boardData={editorBoard} width={width} height={height} finishScore={finishScore} onStop={() => setIsPlaying(false)} onNextLevel={() => setIsPlaying(false)} levelName={currentLevelName || 'new-level'} />
             ) : (
                 <>
                     <div className="flex-shrink-0 bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-2 flex items-center gap-2 flex-wrap shadow-lg">
@@ -457,6 +510,9 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
                         <span className="text-xs uppercase px-2">Высота</span>
                         <input type="range" min="4" max="12" value={height} onChange={e => setHeight(Number(e.target.value))} className="w-24 accent-cyan-500"/>
                         <span className="font-bold text-cyan-400 w-4">{height}</span>
+                         <div className="w-px h-6 bg-slate-600 mx-1"></div>
+                        <span className="text-xs uppercase px-2">Очки</span>
+                        <input type="number" step="100" min="0" value={finishScore} onChange={e => setFinishScore(Math.max(0, Number(e.target.value)))} className="bg-slate-800 border border-slate-600 rounded-md w-24 p-1 text-center font-bold text-cyan-400"/>
 
                         <button onClick={() => setIsPlaying(true)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-3 rounded-md shadow-md text-xs transition-transform transform hover:scale-105">▶ PLAY</button>
                         <div className="w-px h-6 bg-slate-600 mx-1"></div>
@@ -578,11 +634,17 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
 };
 
 // ================= PLAY SCREEN COMPONENT =================
-const PlayScreen: React.FC<{ levelNameToLoad: string; onBackToMenu: () => void }> = ({ levelNameToLoad, onBackToMenu }) => {
-    const [levelData, setLevelData] = useState<{ width: number, height: number, board: EditorBoard } | null>(null);
+const PlayScreen: React.FC<{ 
+    levelNameToLoad: string; 
+    onBackToMenu: () => void; 
+    isDebugMode: boolean;
+    onLoadLevel: (levelName: string) => void;
+}> = ({ levelNameToLoad, onBackToMenu, isDebugMode, onLoadLevel }) => {
+    const [levelData, setLevelData] = useState<LevelData | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        setError(null);
         const data = loadLevel(levelNameToLoad);
         if (data) {
             setLevelData(data);
@@ -590,6 +652,24 @@ const PlayScreen: React.FC<{ levelNameToLoad: string; onBackToMenu: () => void }
             setError(`Не удалось загрузить уровень: ${levelNameToLoad}`);
         }
     }, [levelNameToLoad]);
+    
+    const handleNextLevel = () => {
+        const currentNumMatch = levelNameToLoad.match(/_(\d+)$/);
+        if (currentNumMatch) {
+            const currentNum = parseInt(currentNumMatch[1], 10);
+            const nextLevelName = levelNameToLoad.replace(`_${currentNum}`, `_${currentNum + 1}`);
+            
+            const savedLevels = getSavedLevels();
+            if (savedLevels.includes(nextLevelName)) {
+                onLoadLevel(nextLevelName);
+            } else {
+                alert("Поздравляем! Вы прошли последний уровень.");
+                onBackToMenu();
+            }
+        } else {
+            onBackToMenu();
+        }
+    };
 
     if (error) {
         return (
@@ -615,9 +695,13 @@ const PlayScreen: React.FC<{ levelNameToLoad: string; onBackToMenu: () => void }
              <GameRunner 
                 boardData={levelData.board} 
                 width={levelData.width} 
-                height={levelData.height} 
+                height={levelData.height}
+                finishScore={levelData.finishScore}
                 onStop={onBackToMenu}
+                onNextLevel={handleNextLevel}
                 stopButtonLabel="ВЫХОД В МЕНЮ"
+                isDebugMode={isDebugMode}
+                levelName={levelNameToLoad}
              />
         </div>
     );
@@ -627,17 +711,28 @@ const PlayScreen: React.FC<{ levelNameToLoad: string; onBackToMenu: () => void }
 const StartScreen: React.FC<{
     onPlay: (levelName: string) => void;
     onEdit: (levelName: string | null) => void;
-}> = ({ onPlay, onEdit }) => {
+    isDebugMode: boolean;
+    onDebugModeChange: (isEnabled: boolean) => void;
+}> = ({ onPlay, onEdit, isDebugMode, onDebugModeChange }) => {
     const [levels, setLevels] = useState<string[]>([]);
     const [selectedLevel, setSelectedLevel] = useState<string>('');
+    const importInputRef = useRef<HTMLInputElement>(null);
 
-    useEffect(() => {
+    const refreshLevels = useCallback(() => {
         const savedLevels = getSavedLevels();
         setLevels(savedLevels);
         if (savedLevels.length > 0) {
-            setSelectedLevel(savedLevels[0]);
+            if (!savedLevels.includes(selectedLevel)) {
+                setSelectedLevel(savedLevels[0]);
+            }
+        } else {
+            setSelectedLevel('');
         }
-    }, []);
+    }, [selectedLevel]);
+
+    useEffect(() => {
+        refreshLevels();
+    }, [refreshLevels]);
 
     const handlePlayClick = () => {
         if (levels.length > 0 && selectedLevel) {
@@ -653,6 +748,83 @@ const StartScreen: React.FC<{
 
     const handleNewClick = () => {
         onEdit(null); // Indicates a new level
+    };
+
+    const handleExport = () => {
+        const savedLevels = getSavedLevels();
+        if (savedLevels.length === 0) {
+            alert("Нет уровней для экспорта.");
+            return;
+        }
+        const exportData: { [key: string]: LevelData } = {};
+        savedLevels.forEach(levelName => {
+            const levelData = loadLevel(levelName);
+            if (levelData) {
+                exportData[levelName] = levelData;
+            }
+        });
+
+        const jsonString = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.download = `hexa-core-levels-${timestamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleImportClick = () => {
+        importInputRef.current?.click();
+    };
+
+    const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target?.result;
+                if (typeof text !== 'string') {
+                    throw new Error("Не удалось прочитать файл.");
+                }
+                const importedData = JSON.parse(text);
+                
+                if (typeof importedData !== 'object' || importedData === null || Array.isArray(importedData)) {
+                     throw new Error("Неверный формат файла.");
+                }
+
+                let importedCount = 0;
+                Object.entries(importedData).forEach(([levelName, levelData]) => {
+                    if (isPartialLevelData(levelData)) {
+                        const fullLevelData: LevelData = {
+                             ...(levelData as any),
+                             finishScore: (levelData as any).finishScore ?? 1000,
+                        };
+                        saveLevel(levelName, fullLevelData);
+                        importedCount++;
+                    } else {
+                        console.warn(`Пропущен неверный уровень '${levelName}' при импорте.`);
+                    }
+                });
+                
+                alert(`Импорт завершен! Загружено ${importedCount} уровней.`);
+                refreshLevels();
+
+            } catch (error) {
+                console.error("Ошибка импорта:", error);
+                alert(`Ошибка импорта: ${error instanceof Error ? error.message : "Неизвестная ошибка"}`);
+            } finally {
+                if (event.target) {
+                    event.target.value = '';
+                }
+            }
+        };
+        reader.readAsText(file);
     };
 
     return (
@@ -694,6 +866,39 @@ const StartScreen: React.FC<{
                         СОЗДАТЬ НОВЫЙ
                     </button>
                 </div>
+
+                <div className="relative flex py-2 items-center w-full">
+                    <div className="flex-grow border-t border-slate-600"></div>
+                    <span className="flex-shrink mx-4 text-slate-400 font-orbitron">УПРАВЛЕНИЕ</span>
+                    <div className="flex-grow border-t border-slate-600"></div>
+                </div>
+                <div className="flex gap-4 w-full">
+                    <button onClick={handleImportClick} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-lg font-orbitron">
+                        ИМПОРТ
+                    </button>
+                    <button onClick={handleExport} disabled={levels.length === 0} className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-purple-500 text-lg font-orbitron disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        ЭКСПОРТ
+                    </button>
+                    <input
+                        type="file"
+                        ref={importInputRef}
+                        onChange={handleFileImport}
+                        accept=".json,application/json"
+                        className="hidden"
+                    />
+                </div>
+
+                <div className="w-full border-t border-slate-600 pt-4 mt-2">
+                    <label className="flex items-center justify-center gap-3 text-slate-300 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={isDebugMode}
+                            onChange={(e) => onDebugModeChange(e.target.checked)}
+                            className="w-5 h-5 bg-slate-800 border-slate-600 rounded text-cyan-500 focus:ring-cyan-500"
+                        />
+                        <span className="font-orbitron">ДЕБАГ МОД</span>
+                    </label>
+                </div>
             </div>
         </div>
     );
@@ -704,6 +909,7 @@ const StartScreen: React.FC<{
 const App = () => {
     const [view, setView] = useState<'start' | 'editor' | 'play'>('start');
     const [levelToLoad, setLevelToLoad] = useState<string | null>(null);
+    const [isDebugMode, setIsDebugMode] = useState(false);
 
     const handleStartEditor = (levelName: string | null) => {
         setLevelToLoad(levelName);
@@ -721,12 +927,21 @@ const App = () => {
         setLevelToLoad(null);
     };
 
+    const handleLoadLevel = useCallback((levelName: string) => {
+        const data = loadLevel(levelName);
+        if (data) {
+            setLevelToLoad(levelName);
+        } else {
+            handleBackToMenu();
+        }
+    }, []);
+
     if (view === 'start') {
-        return <StartScreen onPlay={handlePlay} onEdit={handleStartEditor} />;
+        return <StartScreen onPlay={handlePlay} onEdit={handleStartEditor} isDebugMode={isDebugMode} onDebugModeChange={setIsDebugMode} />;
     }
     
     if (view === 'play' && levelToLoad) {
-        return <PlayScreen levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} />;
+        return <PlayScreen levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} isDebugMode={isDebugMode} onLoadLevel={handleLoadLevel} />;
     }
 
     return <Editor levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} />;

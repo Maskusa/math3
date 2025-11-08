@@ -43,12 +43,14 @@ const getPhaseLabel = (phase: GamePhase): string => {
         case 'GRAVITY': return 'Падение';
         case 'REFILLING': return 'Заполнение';
         case 'GAME_OVER': return 'Конец игры';
+        case 'READY': return 'ГОТОВНОСТЬ';
         default: return '';
     }
 }
 
 const Controls: React.FC<ControlsProps> = (props) => {
   const { isAiActive, onToggleAi, showHints, onToggleHints, isMuted, onToggleMute, isProcessing, isPaused, onPlay, onPause, onStep, gamePhase, onRestart, isStepMode, onToggleStepMode } = props;
+  const isReadyPhase = gamePhase === 'READY';
   
   return (
     <div className="bg-black/30 p-3 rounded-lg shadow-lg border border-cyan-400/30 flex flex-col items-center justify-center gap-4 w-full">
@@ -62,7 +64,7 @@ const Controls: React.FC<ControlsProps> = (props) => {
             <ControlButton onClick={onToggleMute} isActive={!isMuted} disabled={false}>
                {isMuted ? 'Звук: ВЫКЛ' : 'Звук: ВКЛ'}
             </ControlButton>
-            <ControlButton onClick={onRestart} isActive={false} disabled={false}>
+            <ControlButton onClick={onRestart} isActive={false} disabled={isReadyPhase}>
                Сброс
             </ControlButton>
         </div>
@@ -74,7 +76,7 @@ const Controls: React.FC<ControlsProps> = (props) => {
                 type="checkbox" 
                 checked={isStepMode}
                 onChange={onToggleStepMode}
-                disabled={isProcessing && !isPaused}
+                disabled={(isProcessing && !isPaused) || isReadyPhase}
                 className="w-4 h-4 bg-slate-700 border-slate-500 rounded text-cyan-500 focus:ring-cyan-400 cursor-pointer disabled:cursor-not-allowed"
               />
               Шаг
@@ -83,7 +85,7 @@ const Controls: React.FC<ControlsProps> = (props) => {
 
         <div className="flex items-center justify-center gap-3 w-full">
             {isPaused ? (
-              <ControlButton onClick={onPlay} isActive={true} disabled={false} className="flex-1">
+              <ControlButton onClick={onPlay} isActive={true} disabled={isReadyPhase} className="flex-1">
                 Старт ▶️
               </ControlButton>
             ) : (
@@ -91,12 +93,12 @@ const Controls: React.FC<ControlsProps> = (props) => {
                 Пауза ⏸️
               </ControlButton>
             )}
-             <ControlButton onClick={onStep} isActive={false} disabled={!isPaused} className="flex-1">
+             <ControlButton onClick={onStep} isActive={false} disabled={!isPaused || isReadyPhase} className="flex-1">
                Шаг ⏯️
             </ControlButton>
         </div>
         <div className="text-center text-xs text-cyan-300 h-4 mt-1 tracking-wider">
-            {isProcessing ? `Фаза: ${getPhaseLabel(gamePhase)}` : ''}
+            {isProcessing || isReadyPhase ? `Фаза: ${getPhaseLabel(gamePhase)}` : ''}
         </div>
     </div>
   );

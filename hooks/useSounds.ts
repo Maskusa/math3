@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 
-type SoundName = 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy';
+type SoundName = 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy' | 'win';
 
 export const useSounds = () => {
   const [isMuted, setIsMuted] = useState(false);
@@ -103,6 +103,22 @@ export const useSounds = () => {
         gain.connect(masterGain);
         osc.start(now);
         osc.stop(now + 0.8);
+        break;
+      }
+      case 'win': {
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((note, i) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(note, now + i * 0.1);
+            gain.gain.setValueAtTime(0.4, now + i * 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.1 + 0.4);
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start(now + i * 0.1);
+            osc.stop(now + i * 0.1 + 0.4);
+        });
         break;
       }
       case 'bomb': {

@@ -15,6 +15,8 @@ export const useGameLogic = ({
     autoPause,
     generationConfig,
     boardSize,
+    isDebugMode = false,
+    finishScore
 }: GameLogicProps) => {
     const [board, setBoard] = useState<BoardType>([]);
     const [score, setScore] = useState(0);
@@ -29,6 +31,42 @@ export const useGameLogic = ({
     useEffect(() => {
         isProcessingRef.current = isProcessing;
     }, [isProcessing]);
+    
+    const scoreRef = useRef(score);
+     useEffect(() => {
+        scoreRef.current = score;
+    }, [score]);
+
+    const logCollectorRef = useRef<string[]>([]);
+    const indentLevelRef = useRef(0);
+
+    const log = useCallback((...args: any[]) => {
+        const message = args.map(arg => {
+            try {
+                // Safely stringify objects, handling potential circular references
+                return typeof arg === 'object' && arg !== null ? JSON.stringify(arg, null, 2) : String(arg);
+            } catch (e) {
+                return '[Circular Object]';
+            }
+        }).join(' ');
+        const indentedMessage = '  '.repeat(indentLevelRef.current) + message;
+        logCollectorRef.current.push(indentedMessage);
+        if (isDebugMode) console.log('[DEBUG]', ...args);
+    }, [isDebugMode]);
+
+    const group = useCallback((label: string) => {
+        const message = '  '.repeat(indentLevelRef.current) + label;
+        logCollectorRef.current.push(message);
+        logCollectorRef.current.push('  '.repeat(indentLevelRef.current) + '{');
+        indentLevelRef.current++;
+        if (isDebugMode) console.group(label);
+    }, [isDebugMode]);
+
+    const groupEnd = useCallback(() => {
+        indentLevelRef.current = Math.max(0, indentLevelRef.current - 1);
+        logCollectorRef.current.push('  '.repeat(indentLevelRef.current) + '}');
+        if (isDebugMode) console.groupEnd();
+    }, [isDebugMode]);
     
     // FIX: Use ReturnType<typeof setTimeout> for browser compatibility instead of NodeJS.Timeout.
     const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -120,16 +158,28 @@ export const useGameLogic = ({
         let activeSpecials = [...specialTilesToActivate];
 
         while(true) {
-            if(isPaused) {setIsProcessing(false); return;}
+            chain++;
+            group(`Game Loop - Chain ${chain}`);
+            
+            if(isPaused) {
+                log('Game loop paused.');
+                setIsProcessing(false); 
+                groupEnd();
+                return;
+            }
             onPhaseChange('MATCHING'); autoPause();
+            log(`Phase: MATCHING. Searching for matches in board of ${boardState.length} tiles.`);
             const matches = findMatches(boardState);
             
             let tilesToDestroy = new Set<TileData>([...matches, ...activeSpecials]);
+            log(`Initial matches: ${matches.length}, Initial special activations: ${activeSpecials.length}. Total to process: ${tilesToDestroy.size}`);
             activeSpecials = []; // Consume specials
 
-            if (tilesToDestroy.size === 0) break;
-            
-            chain++;
+            if (tilesToDestroy.size === 0) {
+                 log('No matches or specials to process. Ending game loop.');
+                 groupEnd();
+                 break;
+            }
             
             const processingQueue = [...tilesToDestroy].filter(t => t.type >= TILE_TYPE_BOMB);
             const processedSpecials = new Set<number>();
@@ -138,6 +188,8 @@ export const useGameLogic = ({
                 const specialTile = processingQueue.shift()!;
                 if (processedSpecials.has(specialTile.id)) continue;
                 processedSpecials.add(specialTile.id);
+                
+                log(`Activating special tile: type ${specialTile.type} at (${specialTile.row}, ${specialTile.col})`);
                 
                 switch(specialTile.type) {
                     case TILE_TYPE_BOMB:
@@ -176,16 +228,31 @@ export const useGameLogic = ({
             }
             
             playSound('match');
-            setScore(s => s + tilesToDestroy.size * 10 * chain);
+            const pointsToAdd = tilesToDestroy.size * 10 * chain;
+            setScore(s => s + pointsToAdd);
+
+            if (finishScore && (scoreRef.current + pointsToAdd) >= finishScore) {
+                log(`WIN CONDITION MET: score ${scoreRef.current + pointsToAdd} >= finishScore ${finishScore}`);
+                setBoard(boardState.map(t => tilesToDestroy.has(t) ? {...t, isMatched: true} : t));
+                await delay(timingConfig.matchDelay);
+                onPhaseChange('WIN');
+                playSound('win');
+                setIsProcessing(false);
+                groupEnd();
+                return;
+            }
+
             onPhaseChange('REMOVING'); autoPause();
+            log(`Phase: REMOVING. Total tiles to destroy after specials: ${tilesToDestroy.size}`, [...tilesToDestroy].map(t => `id:${t.id} type:${t.type} @(${t.row},${t.col})`));
             
             setBoard(boardState.map(t => tilesToDestroy.has(t) ? {...t, isMatched: true} : t));
             await delay(timingConfig.matchDelay);
-            if (isPaused) { setIsProcessing(false); return; }
+            if (isPaused) { log('Game loop paused during REMOVING phase.'); setIsProcessing(false); groupEnd(); return; }
 
             boardState = boardState.filter(t => !tilesToDestroy.has(t));
 
             onPhaseChange('GRAVITY'); autoPause();
+            log('Phase: GRAVITY. Applying gravity to remaining tiles.');
             let moved = false;
             for (let c = 0; c < boardSize.width; c++) {
                 const column = boardState.filter(t => t.col === c).sort((a,b) => b.row - a.row);
@@ -193,6 +260,7 @@ export const useGameLogic = ({
                     const tile = column[i];
                     const targetRow = boardSize.height - 1 - i;
                     if (tile.row !== targetRow) {
+                        log(`Tile ${tile.id} moving from row ${tile.row} to ${targetRow}`);
                         tile.row = targetRow;
                         moved = true;
                     }
@@ -202,7 +270,7 @@ export const useGameLogic = ({
             if (moved) playSound('fall');
             setBoard([...boardState]);
             await delay(timingConfig.fallDelay);
-            if (isPaused) { setIsProcessing(false); return; }
+            if (isPaused) { log('Game loop paused during GRAVITY phase.'); setIsProcessing(false); groupEnd(); return; }
 
             onPhaseChange('REFILLING'); autoPause();
             let maxId = Math.max(0, ...boardState.map(t => t.id), ...[...tilesToDestroy].map(t => t.id));
@@ -213,11 +281,12 @@ export const useGameLogic = ({
                     newTiles.push({ id: ++maxId, type: getRandomTileType(), col: c, row: -1 - r, isNew: true });
                 }
             }
+            log(`Phase: REFILLING. Adding ${newTiles.length} new tiles.`);
             
             boardState = [...boardState, ...newTiles];
             setBoard([...boardState]);
             await delay(50);
-            if (isPaused) { setIsProcessing(false); return; }
+            if (isPaused) { log('Game loop paused during initial REFILLING phase.'); setIsProcessing(false); groupEnd(); return; }
 
             boardState.forEach(t => {
                 if (t.isNew) {
@@ -230,28 +299,36 @@ export const useGameLogic = ({
             playSound('fall');
             setBoard([...boardState]);
             await delay(timingConfig.fallDelay);
-            if (isPaused) { setIsProcessing(false); return; }
+            if (isPaused) { log('Game loop paused during final REFILLING phase.'); setIsProcessing(false); groupEnd(); return; }
+            groupEnd();
         }
 
-        if (moves <= 0) {
+        if (moves <= 0 && scoreRef.current < (finishScore || Infinity)) {
+            log('GAME OVER: No moves left.');
             onPhaseChange('GAME_OVER');
             playSound('gameover');
         } else {
+            log('Game loop finished. No more matches found. Setting phase to IDLE.');
             onPhaseChange('IDLE');
         }
         setIsProcessing(false);
-    }, [isPaused, boardSize, findMatches, playSound, setScore, onPhaseChange, autoPause, delay, timingConfig, getRandomTileType, moves]);
+    }, [isPaused, boardSize, findMatches, playSound, setScore, onPhaseChange, autoPause, delay, timingConfig, getRandomTileType, moves, log, group, groupEnd, finishScore]);
     
     const handleTileClick = useCallback(async (row: number, col: number) => {
         if (isProcessingRef.current || isPaused || moves <= 0) return;
 
+        group(`Player Move: Click at (${row}, ${col})`);
         const getTile = (r: number, c: number) => board.find(t => t.row === r && t.col === c);
 
         if (selectedTile) {
             const current = getTile(row, col);
             const selected = getTile(selectedTile.row, selectedTile.col);
             
+            log(`Second tile selected at (${row}, ${col})`);
+
             if (current && selected && areAdjacent({row, col}, selectedTile)) {
+                log('Tiles are adjacent. Attempting swap:', { from: selected, to: current });
+                
                 const newBoard = board.map(t => ({...t}));
                 const currentIndex = newBoard.findIndex(t => t.id === current.id);
                 const selectedIndex = newBoard.findIndex(t => t.id === selected.id);
@@ -263,12 +340,16 @@ export const useGameLogic = ({
                 const wasSpecialMoved = current.type >= TILE_TYPE_BOMB || selected.type >= TILE_TYPE_BOMB;
 
                 if (matches.length > 0) {
+                    log(`Swap is valid. Found ${matches.length} matched tiles. Special moved: ${wasSpecialMoved}`);
                     playSound('swap');
                     setSelectedTile(null);
                     setBoard(newBoard);
                     await delay(timingConfig.swapDelay);
 
-                    setMoves(m => m - 1);
+                    setMoves(m => {
+                        log(`Decrementing moves. New count: ${m - 1}`);
+                        return m - 1;
+                    });
                     
                     let specialToActivate: TileData[] = [];
                     if (wasSpecialMoved) {
@@ -277,18 +358,25 @@ export const useGameLogic = ({
                     }
                     gameLoop(newBoard, specialToActivate);
                 } else {
+                    log('Swap is invalid. No matches found.');
                     playSound('invalid');
                     setSelectedTile(null);
                 }
             } else {
+                 log('Second tile is not adjacent or is the same tile. Selecting new tile.');
                 setSelectedTile({row, col});
             }
         } else {
+            log('First tile selected.');
             setSelectedTile({row, col});
         }
-    }, [board, selectedTile, moves, isPaused, playSound, timingConfig.swapDelay, findMatches, gameLoop, delay]);
+        groupEnd();
+    }, [board, selectedTile, moves, isPaused, playSound, timingConfig.swapDelay, findMatches, gameLoop, delay, log, group, groupEnd]);
 
     const restartGame = useCallback((customBoard?: BoardType) => {
+        logCollectorRef.current = [];
+        indentLevelRef.current = 0;
+        log('Restarting game. Custom board provided:', !!customBoard);
         clearTimeouts();
         setIsProcessing(false);
         setScore(0);
@@ -300,8 +388,7 @@ export const useGameLogic = ({
         } else {
             createBoard();
         }
-        onPhaseChange('IDLE');
-    }, [createBoard, clearTimeouts, onPhaseChange]);
+    }, [createBoard, clearTimeouts, log]);
 
     useEffect(() => {
         // This effect will run on initial mount if not in a custom game runner context
@@ -310,17 +397,17 @@ export const useGameLogic = ({
     
     useEffect(() => {
         if (!isPaused) {
-            clearTimeouts();
-            if (isProcessingRef.current) {
-                gameLoop(board);
-            }
+            // When un-paused (e.g., after the "Ready" screen or user clicks Play),
+            // we should kick off the game loop to check for initial matches.
+            // The gameLoop function itself has a re-entry guard, so this is safe.
+            gameLoop(board);
         } else {
             clearTimeouts();
         }
-    }, [isPaused, stepTrigger]);
+    }, [isPaused, stepTrigger, board, gameLoop, clearTimeouts]);
 
     const toggleAi = () => setIsAiActive(p => !p);
     const toggleHints = () => setShowHints(p => !p);
 
-    return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isAiActive, toggleAi, showHints, toggleHints, isProcessing };
+    return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isAiActive, toggleAi, showHints, toggleHints, isProcessing, logCollectorRef };
 };

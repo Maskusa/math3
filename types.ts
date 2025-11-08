@@ -1,3 +1,4 @@
+import { TILE_COLORS } from './constants';
 export interface BoardSize {
   width: number;
   height: number;
@@ -18,6 +19,15 @@ export interface GenerationConfig {
       metal: { enabled: boolean };
       stone: { enabled: boolean };
   };
+}
+
+export type EditorBoard = (number | null)[][];
+
+export interface LevelData {
+  width: number;
+  height: number;
+  board: EditorBoard;
+  finishScore: number;
 }
 
 export interface Position {
@@ -41,10 +51,10 @@ export interface TileData {
 
 export type BoardType = TileData[];
 
-export type GamePhase = 'IDLE' | 'MATCHING' | 'REMOVING' | 'GRAVITY' | 'REFILLING' | 'GAME_OVER';
+export type GamePhase = 'READY' | 'IDLE' | 'MATCHING' | 'REMOVING' | 'GRAVITY' | 'REFILLING' | 'GAME_OVER' | 'WIN';
 
 export interface GameLogicProps {
-    playSound: (sound: 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy') => void;
+    playSound: (sound: 'swap' | 'match' | 'invalid' | 'fall' | 'gameover' | 'bomb' | 'laser' | 'electric' | 'rainbow' | 'complex_hit' | 'complex_destroy' | 'win') => void;
     timingConfig: TimingConfig;
     isPaused: boolean;
     stepTrigger: number;
@@ -53,4 +63,6 @@ export interface GameLogicProps {
     autoPause: () => void;
     generationConfig: GenerationConfig;
     boardSize: BoardSize;
+    isDebugMode?: boolean;
+    finishScore?: number;
 }
