@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameLogic } from './hooks/useGameLogic';
 import GameBoard from './components/GameBoard';
@@ -57,13 +58,32 @@ const saveLevel = (name: string, data: { width: number, height: number, board: E
     localStorage.setItem(`${STORAGE_PREFIX}${name}`, JSON.stringify(data));
 };
 
+// Type guard for robust level data validation
+const isLevelData = (data: any): data is { width: number, height: number, board: EditorBoard } => {
+    return (
+        typeof data === 'object' &&
+        data !== null &&
+        !Array.isArray(data) &&
+        typeof data.width === 'number' && data.width >= 4 && data.width <= 12 &&
+        typeof data.height === 'number' && data.height >= 4 && data.height <= 12 &&
+        Array.isArray(data.board) &&
+        data.board.length === data.height &&
+        data.board.every((row: any) => Array.isArray(row) && row.length === data.width)
+    );
+};
+
 const loadLevel = (name: string): { width: number, height: number, board: EditorBoard } | null => {
-    const data = localStorage.getItem(`${STORAGE_PREFIX}${name}`);
-    if (data) {
+    const dataStr = localStorage.getItem(`${STORAGE_PREFIX}${name}`);
+    if (dataStr) {
         try {
-            return JSON.parse(data);
+            const parsedData = JSON.parse(dataStr);
+            if (isLevelData(parsedData)) {
+                return parsedData;
+            }
+            console.error(`Invalid level data structure for level: ${name}`);
+            return null;
         } catch (error) {
-            console.error(`Failed to parse level: ${name}`, error);
+            console.error(`Failed to parse JSON for level: ${name}`, error);
             return null;
         }
     }
@@ -95,7 +115,8 @@ const GameRunner: React.FC<{
     width: number;
     height: number;
     onStop: () => void;
-}> = ({ boardData, width, height, onStop }) => {
+    stopButtonLabel?: string;
+}> = ({ boardData, width, height, onStop, stopButtonLabel = '■ STOP' }) => {
     const { playSound, isMuted, toggleMute } = useSounds();
     const [isPaused, setIsPaused] = useState(true);
     const [stepTrigger, setStepTrigger] = useState(0);
@@ -173,7 +194,7 @@ const GameRunner: React.FC<{
                 onClick={onStop}
                 className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105"
             >
-                ■ STOP
+                {stopButtonLabel}
             </button>
             <div className="flex flex-col md:flex-row items-start justify-center gap-6">
                 <GameBoard
@@ -256,18 +277,16 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
                 setEditorBoard(levelData.board);
                 setHistory([{ board: levelData.board, width: levelData.width, height: levelData.height }]);
             } else {
-                 // Handle case where level is not found
                  onBackToMenu();
             }
         } else {
             createGrid();
         }
-    }, [levelNameToLoad]);
+    }, [levelNameToLoad, onBackToMenu, createGrid]);
 
     useEffect(() => {
-        // Debounced or conditional grid creation if size changes
         const handler = setTimeout(() => {
-            if (!levelNameToLoad) { // Only auto-create for new levels
+            if (!levelNameToLoad) {
                  createGrid();
             }
         }, 300);
@@ -275,7 +294,7 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     }, [width, height, levelNameToLoad, createGrid]);
 
     const addToHistory = (entry: HistoryEntry) => {
-        setHistory(prev => [...prev.slice(-99), entry]); // Keep last 100 states
+        setHistory(prev => [...prev.slice(-99), entry]);
     };
 
     const handleUndo = () => {
@@ -297,7 +316,6 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     const handleSaveSimple = () => {
         if (currentLevelName) {
             saveLevel(currentLevelName, { width, height, board: editorBoard });
-            // You could add a small "Saved!" notification here
         } else {
             handleSaveAs();
         }
@@ -559,8 +577,57 @@ const Editor: React.FC<{ levelNameToLoad: string | null; onBackToMenu: () => voi
     );
 };
 
+// ================= PLAY SCREEN COMPONENT =================
+const PlayScreen: React.FC<{ levelNameToLoad: string; onBackToMenu: () => void }> = ({ levelNameToLoad, onBackToMenu }) => {
+    const [levelData, setLevelData] = useState<{ width: number, height: number, board: EditorBoard } | null>(null);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const data = loadLevel(levelNameToLoad);
+        if (data) {
+            setLevelData(data);
+        } else {
+            setError(`Не удалось загрузить уровень: ${levelNameToLoad}`);
+        }
+    }, [levelNameToLoad]);
+
+    if (error) {
+        return (
+            <div className="min-h-screen w-full flex flex-col items-center justify-center p-4 gap-4">
+                <p className="text-red-500 text-xl">{error}</p>
+                <button onClick={onBackToMenu} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-6 rounded-md shadow-md transition-transform transform hover:scale-105">
+                    Назад в меню
+                </button>
+            </div>
+        );
+    }
+
+    if (!levelData) {
+        return (
+            <div className="min-h-screen w-full flex items-center justify-center">
+                <p className="text-2xl text-cyan-400 font-orbitron animate-pulse">ЗАГРУЗКА ИНТЕРФЕЙСА...</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen w-full flex flex-col items-center p-4">
+             <GameRunner 
+                boardData={levelData.board} 
+                width={levelData.width} 
+                height={levelData.height} 
+                onStop={onBackToMenu}
+                stopButtonLabel="ВЫХОД В МЕНЮ"
+             />
+        </div>
+    );
+};
+
 // ================= START SCREEN COMPONENT =================
-const StartScreen: React.FC<{ onStart: (levelName: string | null) => void }> = ({ onStart }) => {
+const StartScreen: React.FC<{
+    onPlay: (levelName: string) => void;
+    onEdit: (levelName: string | null) => void;
+}> = ({ onPlay, onEdit }) => {
     const [levels, setLevels] = useState<string[]>([]);
     const [selectedLevel, setSelectedLevel] = useState<string>('');
 
@@ -572,21 +639,27 @@ const StartScreen: React.FC<{ onStart: (levelName: string | null) => void }> = (
         }
     }, []);
 
-    const handleStart = () => {
+    const handlePlayClick = () => {
         if (levels.length > 0 && selectedLevel) {
-            onStart(selectedLevel);
+            onPlay(selectedLevel);
         }
     };
     
-    const handleNew = () => {
-        onStart(null); // Indicates a new level
-    }
+    const handleEditClick = () => {
+        if (levels.length > 0 && selectedLevel) {
+            onEdit(selectedLevel);
+        }
+    };
+
+    const handleNewClick = () => {
+        onEdit(null); // Indicates a new level
+    };
 
     return (
         <div className="min-h-screen w-full flex flex-col items-center justify-center p-4 gap-8">
-            <h1 className="text-7xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 font-orbitron">HEXA-CORE EDITOR</h1>
-            <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-8 flex flex-col items-center gap-6 shadow-lg w-full max-w-md">
-                <h2 className="text-2xl font-orbitron text-slate-300">Загрузить уровень</h2>
+            <h1 className="text-7xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-fuchsia-500 font-orbitron">HEXA-CORE</h1>
+            <div className="bg-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-lg p-8 flex flex-col items-center gap-6 shadow-lg w-full max-w-lg">
+                <h2 className="text-2xl font-orbitron text-slate-300">ВЫБЕРИТЕ УРОВЕНЬ</h2>
                 <div className="flex items-center gap-2 w-full">
                     <select
                         value={selectedLevel}
@@ -602,20 +675,25 @@ const StartScreen: React.FC<{ onStart: (levelName: string | null) => void }> = (
                     </select>
                 </div>
                  <button 
-                    onClick={handleStart} 
+                    onClick={handlePlayClick} 
                     disabled={levels.length === 0}
                     className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed text-lg font-orbitron"
                 >
-                    ЗАПУСК
+                    ИГРАТЬ
                 </button>
                 <div className="relative flex py-2 items-center w-full">
                     <div className="flex-grow border-t border-slate-600"></div>
-                    <span className="flex-shrink mx-4 text-slate-400">ИЛИ</span>
+                    <span className="flex-shrink mx-4 text-slate-400 font-orbitron">РЕДАКТОР</span>
                     <div className="flex-grow border-t border-slate-600"></div>
                 </div>
-                 <button onClick={handleNew} className="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-lg font-orbitron">
-                    НОВЫЙ УРОВЕНЬ
-                </button>
+                 <div className="flex gap-4 w-full">
+                    <button onClick={handleEditClick} disabled={levels.length === 0} className="flex-1 bg-sky-600 hover:bg-sky-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-sky-500 text-lg font-orbitron disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        РЕДАКТИРОВАТЬ
+                    </button>
+                    <button onClick={handleNewClick} className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-md shadow-lg transition-transform transform hover:scale-105 active:scale-100 focus:outline-none focus:ring-2 focus:ring-cyan-500 text-lg font-orbitron">
+                        СОЗДАТЬ НОВЫЙ
+                    </button>
+                </div>
             </div>
         </div>
     );
@@ -624,12 +702,18 @@ const StartScreen: React.FC<{ onStart: (levelName: string | null) => void }> = (
 
 // ================= MAIN APP COMPONENT =================
 const App = () => {
-    const [view, setView] = useState<'start' | 'editor'>('start');
+    const [view, setView] = useState<'start' | 'editor' | 'play'>('start');
     const [levelToLoad, setLevelToLoad] = useState<string | null>(null);
 
     const handleStartEditor = (levelName: string | null) => {
         setLevelToLoad(levelName);
         setView('editor');
+    };
+
+    const handlePlay = (levelName: string) => {
+        if (!levelName) return;
+        setLevelToLoad(levelName);
+        setView('play');
     };
     
     const handleBackToMenu = () => {
@@ -638,7 +722,11 @@ const App = () => {
     };
 
     if (view === 'start') {
-        return <StartScreen onStart={handleStartEditor} />;
+        return <StartScreen onPlay={handlePlay} onEdit={handleStartEditor} />;
+    }
+    
+    if (view === 'play' && levelToLoad) {
+        return <PlayScreen levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} />;
     }
 
     return <Editor levelNameToLoad={levelToLoad} onBackToMenu={handleBackToMenu} />;
