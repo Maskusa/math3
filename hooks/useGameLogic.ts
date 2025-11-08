@@ -359,23 +359,7 @@ export const useGameLogic = ({
 
         setIsProcessing(false);
         onPhaseChange('IDLE');
-        if (moves <= 0) {
-            const finalScore = scoreRef.current;
-            let stars = 0;
-            if (finalScore >= scoreThresholds.star1) stars = 1;
-            if (finalScore >= scoreThresholds.star2) stars = 2;
-            if (finalScore >= scoreThresholds.star3) stars = 3;
-            
-            if (stars > 0) {
-                playSound('win');
-                onPhaseChange('WIN');
-            } else {
-                playSound('gameover');
-                onPhaseChange('GAME_OVER');
-            }
-            onGameEnd({ score: finalScore, stars });
-        }
-    }, [isPaused, gamePhase, onPhaseChange, findMatches, boardSize, playSound, timingConfig, autoPause, getRandomTileType, log, group, groupEnd, onGameEnd, moves, scoreThresholds, removeAndScore]);
+    }, [isPaused, gamePhase, onPhaseChange, findMatches, boardSize, playSound, timingConfig, autoPause, getRandomTileType, log, group, groupEnd, removeAndScore]);
 
     const findMatchesAfterSwap = (board: BoardType, pos1: Position, pos2: Position): TileData[] => {
         const tempBoard = board.map(t => ({ ...t }));
@@ -508,6 +492,33 @@ export const useGameLogic = ({
     }, [initialMoves, onPhaseChange, clearTimeouts, log, group, groupEnd]);
 
     useEffect(() => {
+        // Check for end game conditions only when the board is stable and not in a special sequence.
+        if (!isProcessing && gamePhase === 'IDLE' && moves <= 0) {
+            log('End game condition met: No more moves.');
+            group('Game End Calculation');
+            const finalScore = scoreRef.current;
+            let stars = 0;
+            if (finalScore >= scoreThresholds.star1) stars = 1;
+            if (finalScore >= scoreThresholds.star2) stars = 2;
+            if (finalScore >= scoreThresholds.star3) stars = 3;
+
+            log(`Final Score: ${finalScore}, Stars: ${stars}`);
+            
+            if (stars > 0) {
+                log('Result: WIN');
+                playSound('win');
+                onPhaseChange('WIN');
+            } else {
+                log('Result: GAME OVER');
+                playSound('gameover');
+                onPhaseChange('GAME_OVER');
+            }
+            groupEnd();
+            onGameEnd({ score: finalScore, stars });
+        }
+    }, [isProcessing, gamePhase, moves, scoreThresholds, onGameEnd, onPhaseChange, playSound, log, group, groupEnd]);
+
+    useEffect(() => {
         if (isPaused) {
             clearTimeouts();
         } else if (!isProcessingRef.current && gamePhase === 'IDLE') {
@@ -522,7 +533,7 @@ export const useGameLogic = ({
                 gameLoop(board);
             }
         }
-    }, [board]);
+    }, [board, findMatches, gameLoop, isProcessing]);
 
     return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef };
 };

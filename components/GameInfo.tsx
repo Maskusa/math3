@@ -15,21 +15,32 @@ const InfoCard: React.FC<{ title: string, value: number | string }> = ({ title, 
 );
 
 const GameInfo: React.FC<GameInfoProps> = ({ score, moves, level, scoreThresholds }) => {
-  
-  const getProgress = () => {
-      if (score < scoreThresholds.star1) {
-          return { progress: (score / scoreThresholds.star1) * 100, target: scoreThresholds.star1, stars: 1 };
-      }
-      if (score < scoreThresholds.star2) {
-          return { progress: ((score - scoreThresholds.star1) / (scoreThresholds.star2 - scoreThresholds.star1)) * 100, target: scoreThresholds.star2, stars: 2 };
-      }
-      if (score < scoreThresholds.star3) {
-           return { progress: ((score - scoreThresholds.star2) / (scoreThresholds.star3 - scoreThresholds.star2)) * 100, target: scoreThresholds.star3, stars: 3 };
-      }
-      return { progress: 100, target: scoreThresholds.star3, stars: 3 };
-  };
+  const { star1, star2, star3 } = scoreThresholds;
+  const maxScore = star3 > 0 ? star3 : star1;
 
-  const { progress, target, stars } = getProgress();
+  const overallProgress = Math.min(100, (score / maxScore) * 100);
+
+  let currentTarget: number;
+  let achievedStars: number;
+  let pulseStarIndex: number | null = null;
+
+  if (score < star1) {
+    currentTarget = star1;
+    achievedStars = 0;
+    pulseStarIndex = 1;
+  } else if (score < star2) {
+    currentTarget = star2;
+    achievedStars = 1;
+    pulseStarIndex = 2;
+  } else if (score < star3) {
+    currentTarget = star3;
+    achievedStars = 2;
+    pulseStarIndex = 3;
+  } else {
+    currentTarget = star3;
+    achievedStars = 3;
+    pulseStarIndex = null; 
+  }
 
   return (
     <div className="flex flex-col gap-4 w-full text-white">
@@ -39,18 +50,18 @@ const GameInfo: React.FC<GameInfoProps> = ({ score, moves, level, scoreThreshold
                 <p className="text-xs text-slate-400 uppercase tracking-widest">Прогресс</p>
                 <div className="flex">
                     {[1, 2, 3].map(i => (
-                        <span key={i} className={`text-lg ${i < stars ? 'text-yellow-400' : (i === stars ? 'text-yellow-400 animate-pulse' : 'text-slate-600')}`}>★</span>
+                        <span key={i} className={`text-lg ${i <= achievedStars ? 'text-yellow-400' : (i === pulseStarIndex ? 'text-yellow-400 animate-pulse' : 'text-slate-600')}`}>★</span>
                     ))}
                 </div>
             </div>
             <div className="w-full bg-slate-700 rounded-full h-4 border border-slate-500 overflow-hidden relative">
                 <div 
                     className="bg-gradient-to-r from-cyan-500 to-teal-400 h-full rounded-full transition-all duration-500 ease-out flex items-center justify-center text-black font-bold text-xs"
-                    style={{ width: `${Math.min(100, progress)}%` }}
+                    style={{ width: `${overallProgress}%` }}
                 >
                 </div>
                  <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white" style={{ textShadow: '1px 1px 2px black'}}>
-                    {score} / {Math.round(target)}
+                    {score} / {Math.round(currentTarget)}
                 </div>
             </div>
         </div>
