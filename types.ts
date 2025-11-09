@@ -56,6 +56,7 @@ export interface TileData {
     isNew?: boolean;
     health?: number;
     maxHealth?: number;
+    replaceable?: boolean;
 }
 
 export type BoardType = TileData[];

@@ -27,6 +27,8 @@ export const useGameLogic = ({
     const [level, setLevel] = useState(1);
     const [selectedTile, setSelectedTile] = useState<Position | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [isReshuffling, setIsReshuffling] = useState(false);
+    const initialBoardRef = useRef<BoardType>([]);
     
     const isProcessingRef = useRef(isProcessing);
     useEffect(() => {
@@ -323,7 +325,9 @@ export const useGameLogic = ({
                 const colSize = boardState.filter(t => t.col === c).length;
                 const newTilesCount = boardSize.height - colSize;
                 for (let i = 0; i < newTilesCount; i++) {
-                    const newTile: TileData = { id: idCounter++, type: getRandomTileType(), row: -1 - i, col: c, isNew: true };
+                    const type = getRandomTileType();
+                    const isReplaceable = ![TILE_TYPE_COMPLEX, TILE_TYPE_STONE, TILE_TYPE_METAL].includes(type);
+                    const newTile: TileData = { id: idCounter++, type, row: -1 - i, col: c, isNew: true, replaceable: isReplaceable };
                     if (newTile.type === TILE_TYPE_COMPLEX) {
                         newTile.health = 3; newTile.maxHealth = 3;
                     }
@@ -361,15 +365,22 @@ export const useGameLogic = ({
         onPhaseChange('IDLE');
     }, [isPaused, gamePhase, onPhaseChange, findMatches, boardSize, playSound, timingConfig, autoPause, getRandomTileType, log, group, groupEnd, removeAndScore]);
 
-    const findMatchesAfterSwap = (board: BoardType, pos1: Position, pos2: Position): TileData[] => {
+    const findMatchesAfterSwap = useCallback((board: BoardType, pos1: Position, pos2: Position): TileData[] => {
+        const tile1_orig = board.find(t => t.row === pos1.row && t.col === pos1.col);
+        const tile2_orig = board.find(t => t.row === pos2.row && t.col === pos2.col);
+        if (!tile1_orig || !tile2_orig) return [];
+
+        if (tile1_orig.type === TILE_TYPE_METAL || tile1_orig.type === TILE_TYPE_STONE || tile1_orig.type === TILE_TYPE_COMPLEX) return [];
+        if (tile2_orig.type === TILE_TYPE_METAL || tile2_orig.type === TILE_TYPE_STONE || tile2_orig.type === TILE_TYPE_COMPLEX) return [];
+
         const tempBoard = board.map(t => ({ ...t }));
-        const tile1 = tempBoard.find(t => t.row === pos1.row && t.col === pos1.col)!;
-        const tile2 = tempBoard.find(t => t.row === pos2.row && t.col === pos2.col)!;
+        const tile1 = tempBoard.find(t => t.id === tile1_orig.id)!;
+        const tile2 = tempBoard.find(t => t.id === tile2_orig.id)!;
 
         [tile1.row, tile1.col, tile2.row, tile2.col] = [tile2.row, tile2.col, tile1.row, tile1.col];
 
         return findMatches(tempBoard);
-    };
+    }, [findMatches]);
 
     const handleSwap = useCallback(async (pos1: Position, pos2: Position) => {
         const tile1 = board.find(t => t.row === pos1.row && t.col === pos1.col);
@@ -430,7 +441,7 @@ export const useGameLogic = ({
     }, [board, delay, timingConfig.swapDelay, findMatchesAfterSwap, playSound, gameLoop, log, group, groupEnd]);
 
     const handleTileClick = useCallback((row: number, col: number) => {
-        if (isProcessingRef.current) return;
+        if (isProcessingRef.current || isReshuffling) return;
         group(`Player Move: Click at (${row}, ${col})`);
 
         const clickedTile = board.find(t => t.row === row && t.col === col);
@@ -456,7 +467,7 @@ export const useGameLogic = ({
             setSelectedTile({ row, col });
         }
         groupEnd();
-    }, [selectedTile, board, handleSwap, playSound, log, group, groupEnd]);
+    }, [selectedTile, board, handleSwap, playSound, log, group, groupEnd, isReshuffling]);
     
     const restartGame = useCallback((initialBoard?: TileData[]) => {
         group('Restarting game.');
@@ -475,25 +486,80 @@ export const useGameLogic = ({
             boardToStart = []; // createBoard() would go here
         }
         
-        const boardWithHealth = boardToStart.map(tile => {
+        const boardWithHealthAndProps = boardToStart.map(tile => {
+            const isReplaceable = ![TILE_TYPE_COMPLEX, TILE_TYPE_STONE, TILE_TYPE_METAL].includes(tile.type);
+            const newTile: TileData = { ...tile, replaceable: isReplaceable };
             if (tile.type === TILE_TYPE_COMPLEX) {
-                return { ...tile, health: 3, maxHealth: 3 };
+                return { ...newTile, health: 3, maxHealth: 3 };
             }
             if (tile.type === TILE_TYPE_STONE) {
-                return { ...tile, health: 2, maxHealth: 2 };
+                return { ...newTile, health: 2, maxHealth: 2 };
             }
-            return tile;
+            return newTile;
         });
         
-        setBoard(boardWithHealth);
+        initialBoardRef.current = JSON.parse(JSON.stringify(boardWithHealthAndProps));
+        setBoard(boardWithHealthAndProps);
         onPhaseChange('READY');
         logCollectorRef.current = [];
         groupEnd();
     }, [initialMoves, onPhaseChange, clearTimeouts, log, group, groupEnd]);
 
+    const hasPossibleMoves = useCallback((board: BoardType): boolean => {
+        for (let r = 0; r < boardSize.height; r++) {
+            for (let c = 0; c < boardSize.width; c++) {
+                if (c < boardSize.width - 1) { // Check swap right
+                    if (findMatchesAfterSwap(board, { row: r, col: c }, { row: r, col: c + 1 }).length > 0) return true;
+                }
+                if (r < boardSize.height - 1) { // Check swap down
+                    if (findMatchesAfterSwap(board, { row: r, col: c }, { row: r + 1, col: c }).length > 0) return true;
+                }
+            }
+        }
+        return false;
+    }, [boardSize.height, boardSize.width, findMatchesAfterSwap]);
+
+    const handleNoMoreMoves = useCallback(async () => {
+        if (isReshuffling) return;
+        log('No more possible moves. Starting reshuffle.');
+        setIsReshuffling(true);
+        await delay(2500);
+
+        const initialBoardMap = new Map<string, TileData>();
+        initialBoardRef.current.forEach(tile => {
+            initialBoardMap.set(`${tile.row},${tile.col}`, tile);
+        });
+
+        let idCounter = Math.max(0, ...board.map(t => t.id)) + 1;
+
+        const reshuffledBoard = board.map(currentTile => {
+            const initialTileAtPos = initialBoardMap.get(`${currentTile.row},${currentTile.col}`);
+            const isReplaceable = currentTile.replaceable ?? true;
+
+            if (isReplaceable && (!initialTileAtPos || initialTileAtPos.type !== currentTile.type)) {
+                log(`Reshuffling tile at (${currentTile.row}, ${currentTile.col}). Was type ${currentTile.type}, initial was ${initialTileAtPos?.type}.`);
+                return {
+                    ...currentTile,
+                    id: idCounter++,
+                    type: getRandomTileType(),
+                    isNew: true,
+                    health: undefined,
+                    maxHealth: undefined,
+                };
+            }
+            return currentTile;
+        });
+
+        setBoard(reshuffledBoard);
+        await delay(50);
+        
+        setBoard(b => b.map(t => ({...t, isNew: false})));
+        setIsReshuffling(false);
+        log('Reshuffle complete.');
+    }, [board, log, delay, getRandomTileType, isReshuffling]);
+
     useEffect(() => {
-        // Check for end game conditions only when the board is stable and not in a special sequence.
-        if (!isProcessing && gamePhase === 'IDLE' && moves <= 0) {
+        if (!isProcessing && gamePhase === 'IDLE' && moves <= 0 && !isReshuffling) {
             log('End game condition met: No more moves.');
             group('Game End Calculation');
             const finalScore = scoreRef.current;
@@ -516,7 +582,7 @@ export const useGameLogic = ({
             groupEnd();
             onGameEnd({ score: finalScore, stars });
         }
-    }, [isProcessing, gamePhase, moves, scoreThresholds, onGameEnd, onPhaseChange, playSound, log, group, groupEnd]);
+    }, [isProcessing, gamePhase, moves, scoreThresholds, onGameEnd, onPhaseChange, playSound, log, group, groupEnd, isReshuffling]);
 
     useEffect(() => {
         if (isPaused) {
@@ -527,13 +593,18 @@ export const useGameLogic = ({
     }, [isPaused, stepTrigger, gamePhase, board, gameLoop, clearTimeouts]);
     
     useEffect(() => {
-        if (!isProcessing) {
+        if (!isProcessing && !isReshuffling) {
             const matches = findMatches(board);
             if (matches.length > 0) {
                 gameLoop(board);
+            } else if (board.length > 0 && gamePhase === 'IDLE') {
+                if (!hasPossibleMoves(board)) {
+                    handleNoMoreMoves();
+                }
             }
         }
-    }, [board, findMatches, gameLoop, isProcessing]);
+    }, [board, findMatches, gameLoop, isProcessing, hasPossibleMoves, handleNoMoreMoves, gamePhase, isReshuffling]);
 
-    return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef };
+
+    return { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef, isReshuffling };
 };

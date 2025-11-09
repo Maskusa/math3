@@ -184,7 +184,7 @@ const GameRunner: React.FC<{
         star3: levelData.finishScore * 1.50,
     };
 
-    const { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef } = useGameLogic({
+    const { board, score, moves, level, handleTileClick, selectedTile, restartGame, isProcessing, logCollectorRef, isReshuffling } = useGameLogic({
         playSound,
         timingConfig,
         isPaused,
@@ -280,6 +280,7 @@ const GameRunner: React.FC<{
                         selectedTile={selectedTile}
                         isProcessing={isProcessing || gamePhase === 'READY'}
                         boardSize={boardSize}
+                        isReshuffling={isReshuffling}
                     />
                     {gamePhase === 'READY' && <GameReadyOverlay onFinished={handleReadySequenceEnd} />}
                 </div>

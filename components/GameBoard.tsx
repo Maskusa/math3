@@ -9,12 +9,13 @@ interface GameBoardProps {
   selectedTile: Position | null;
   isProcessing: boolean;
   boardSize: BoardSize;
+  isReshuffling?: boolean;
 }
 
 const TILE_SIZE = 56; // Corresponds to md:w-14
 const TILE_GAP = 4; // Corresponds to gap-1
 
-const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile, isProcessing, boardSize }) => {
+const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile, isProcessing, boardSize, isReshuffling }) => {
   const [particles, setParticles] = useState<{id: number, x: number, y: number, color: string}[]>([]);
 
   useEffect(() => {
@@ -84,6 +85,13 @@ const GameBoard: React.FC<GameBoardProps> = ({ board, onTileClick, selectedTile,
                 } as React.CSSProperties}
             />
         ))}
+        {isReshuffling && (
+            <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-40 rounded-md backdrop-blur-sm">
+              <h2 className="text-3xl font-orbitron text-white font-bold text-center p-4 animate-pulse" style={{textShadow: '0 0 10px white'}}>
+                Ходов больше нету,<br/>перезагружаем...
+              </h2>
+            </div>
+        )}
       </div>
     </div>
   );
